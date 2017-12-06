@@ -1,2 +1,2 @@
-from .aioxiaomi import XiaomiBulb
-from .discovery import XiaomiUPnP
+from .aioxiaomi import XiaomiBulb, Mode
+from .discover import start_xiaomi_discovery

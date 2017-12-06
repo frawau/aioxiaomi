@@ -23,7 +23,7 @@
 # IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE
 import sys
 import asyncio as aio
-import aioxioami as aiox
+import aioxiaomi as aiox
 from functools import partial
 import argparse
 UDP_BROADCAST_PORT = 56700
@@ -38,6 +38,7 @@ class bulbs():
         self.boi=None #bulb of interest
 
     def register(self,bulb):
+        print("Adding bulb {} {} {}".format(bulb,bulb.name,bulb.bulb_id))
         self.bulbs.append(bulb)
         self.bulbs.sort(key=lambda x: x.name or x.bulb_id )
         if opts.extra:
@@ -56,20 +57,24 @@ class bulbs():
             idx+=1
 
     def new_bulb(self, sender, **kwargs):
-        if 'id' in kwargs['headers']:
-            found = False
-            for abulb in self.bulbs:
-                if abulb.bulb_id == kwargs['headers']:
+        newbulb = aiox.XiaomiBulb(aio.get_event_loop(),kwargs['headers'],self)
+        found = False
+        for abulb in self.bulbs:
+            if abulb.bulb_id == newbulb.bulb_id:
+                found = True
+                break
+        if not found:
+            for abulb in self.pending_bulbs:
+                if abulb.bulb_id == newbulb.bulb_id:
                     found = True
                     break
-            if not found:
-                for abulb in self.pending_bulbs:
-                    if abulb.bulb_id == kwargs['headers']:
-                        found = True
-                        break
 
-            if not found:
-                newbulb = aiox.XiaomiBulb(aio.get_event_loop(),kwargs['headers'],self)
+        if not found:
+            print("Activating bulb {} with id {}".format(newbulb,newbulb.bulb_id))
+            self.pending_bulbs.append(newbulb)
+            newbulb.activate()
+        else:
+            del(newbulb)
 
 
 
@@ -86,7 +91,7 @@ def readin():
                 if int(lov[0]) == 0:
                     MyBulbs.boi=None
                 elif int(lov[0]) == 1:
-                    if len(lov) >1:
+                    if len(lov) >1 and lov[1].lower() in ["on","off"]:
                         MyBulbs.boi.set_power(lov[1].lower())
                         MyBulbs.boi=None
                     else:
@@ -95,8 +100,8 @@ def readin():
                     if len(lov) >2:
                         try:
                             MyBulbs.boi.set_white_direct(
-                                    min(100,int(round(float(lov[1])))),
-                                    int(round(float(lov[2])))])
+                                int(round(float(lov[2]))),
+                                min(100,int(round(float(lov[1])))))
 
                             MyBulbs.boi=None
                         except:
@@ -111,26 +116,29 @@ def readin():
                                     int(round(float(lov[3]))))
                             MyBulbs.boi=None
                         except:
-                            print("Error: For colour Red (0-255), Green (0-255) and Blue (0-255)) must be numbers.\n")
+                            print("Error: For colour Hue (0-359), Saturation (0-100) and Value (0-100)) must be numbers.\n")
                     else:
-                        print("Error: For colour you must indicate Red (0-255), Green (0-255) and Blue (0-255))\n")
+                        print("Error: For colour you must indicate Hue (0-359), Saturation (0-100) and Value (0-100)\n")
 
                 elif int(lov[0]) == 4:
-                    print("Model: {}".format(boi.properties["model"]))
-                    print("Name: {}".format(boi.name))
+                    for prop in MyBulbs.boi.properties:
+                        print("\t{}:\t{}".format(prop.title(),MyBulbs.boi.properties[prop]))
                     MyBulbs.boi=None
                 elif int(lov[0]) == 5:
-                    print("Firmware: {}".format(boi.properties["fw_ver"]))
+                    print("Firmware: {}".format(MyBulbs.boi.properties["fw_ver"]))
                     MyBulbs.boi=None
                 elif int(lov[0]) == 6:
                     if len(lov) >3:
-                        try:
-                            MyBulbs.boi.start_cf(10,"start",[100,aiox.Mode.RGB.value,int(round(float(lov[1])*65535.0+float(lov[2])*256+float(lov[3]))),MyBulbs.boi.brightness,100,,aiox.Mode.RGB.value,MyBulbs.boi.rgb,MyBulbs.boi.brightness])
-                            MyBulbs.boi=None
-                        except:
-                            print("Error: For pulse hue (0-360), saturation (0-100) and brightness (0-100)) must be numbers.\n")
+                        #try:
+                        MyBulbs.boi.start_flow(10,"start",
+                                                [100,aiox.Mode.RGB.value,int(round(float(lov[1])*65535.0+float(lov[2])*256+float(lov[3]))),
+                                                    MyBulbs.boi.brightness,
+                                                100,aiox.Mode.RGB.value,MyBulbs.boi.rgb,MyBulbs.boi.brightness])
+                        MyBulbs.boi=None
+                        #except:
+                            #print("Error: For pulse Red (0-255), Green (0-255) and Blue (0-255) must be numbers.\n")
                     else:
-                        print("Error: For pulse you must indicate hue (0-360), saturation (0-100) and brightness (0-100))\n")
+                        print("Error: For pulse you must indicate Red (0-255), Green (0-255) and Blue (0-255)\n")
             #except:
                 #print ("\nError: Selection must be a number.\n")
         else:
@@ -146,12 +154,12 @@ def readin():
 
     if MyBulbs.boi:
         print("Select Function for {}:".format(MyBulbs.boi.name))
-        print("\t[1]\tPower (0 or 1)")
+        print("\t[1]\tPower (on or off)")
         print("\t[2]\tWhite (Brigthness Temperature)")
-        print("\t[3]\tColour (Red Green Blue)")
+        print("\t[3]\tColour (Hue Saturation Value)")
         print("\t[4]\tInfo")
         print("\t[5]\tFirmware")
-        print("\t[6]\tPulse")
+        print("\t[6]\tPulse (Red Green Blue)")
         print("")
         print("\t[0]\tBack to bulb selection")
     else:
@@ -163,13 +171,9 @@ def readin():
     print("")
     print("Your choice: ", end='',flush=True)
 
-def handler(sender, **kwargs):
-    if 'id' in kwargs['headers']:
 
 
-parser = argparse.ArgumentParser(description="Track and interact with Lifx light bulbs.")
-parser.add_argument("-6", "--ipv6prefix", default=None,
-                    help="Connect to Lifx using IPv6 with given /64 prefix (Do not end with colon unless you have less than 64bits).")
+parser = argparse.ArgumentParser(description="Track and interact with Yeelight light bulbs.")
 parser.add_argument("-x","--extra", action='store_true', default=False,
                     help="Print unexpected messages.")
 try:
@@ -181,7 +185,7 @@ except Exception as e:
 
 MyBulbs= bulbs()
 loop = aio.get_event_loop()
-coro = aiox.start_discovery(MyBulbs.new_bulb)
+coro = aiox.start_xiaomi_discovery(MyBulbs.new_bulb)
 transp, server = loop.run_until_complete(coro)
 try:
     loop.add_reader(sys.stdin,readin)
@@ -192,6 +196,7 @@ try:
 except:
     pass
 finally:
-    server.cancel()
+    server.close()
     loop.remove_reader(sys.stdin)
+    loop.run_until_complete(aio.sleep(2))
     loop.close()

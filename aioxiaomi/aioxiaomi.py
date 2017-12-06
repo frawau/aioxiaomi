@@ -32,7 +32,10 @@ from uuid import uuid4
 PROPERTIES = ["power", "bg_power", "bright", "bg_bright", "nl_br", "ct", "bg_ct",
                "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat", "color_mode","bg_lmode",
                "flowing", "bg_flowing", "flow_params", "bg_flow_params","music_on",
-               "name", "delayoff",'fw_ver',"model"]
+               "name", "delayoff",'fw_ver',"model","id"]
+
+INT_PROPERTIES= ['bright', "bg_bright", "nl_br", "ct", "bg_ct", "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat","delayoff"]
+HEX_PROPERTIES= ["id"]
 
 DEFAULT_TIMEOUT=0.5 # How long to wait for a response
 DEFAULT_ATTEMPTS=1 # How many times to try
@@ -75,36 +78,46 @@ class XiaomiConnect(aio.Protocol):
     def data_received(self,data):
         self.parent.data_received(data)
 
+    def write(self,msg):
+        self.transport.write((msg+"\r\n").encode())
+
     def close(self):
         self.transport.close()
 
+
 class XiaomiBulb(object):
-    """This correspond toa single light bulb.
+    """This correspond to a single light bulb.
 
     This handles all the communications with a single bulb. This is created upon
     discovery of the bulb.
 
         :param loop: The async loop being used
         :type loop: asyncio.EventLoop
-        :param header: A dictionary received upon discovery
-        :type header: dict
+        :param headers: A dictionary received upon discovery
+        :type headers: dict
         :param parent: Parent object with register/unregister methods
         :type parent: object
-        :param tnb: The number of connections to establish with the bulb (default 2)
+        :param tnb: The number of connections to establish with the bulb (default 1)
         :type tnb: int
 
      """
 
 
-     def __init__(self, loop, headers, parent=None, tnb=2):
+    def __init__(self, loop, headers, parent=None, tnb=1):
         self.loop = loop
-        self.support = header["support"]
+        self.parent = parent
+        self.support = headers["support"]
         self.properties = {}
-        for key in header:
+        for key in headers:
             if key in PROPERTIES:
-                self.properties[key]=header[key]
-        self.ip_address = header["location"].split("://")[1].split(":")[0]
-        self.port = header["location"].split("://")[1].split(":")[1]
+                if key in INT_PROPERTIES:
+                    self.properties[key]=int(headers[key])
+                elif key in HEX_PROPERTIES:
+                    self.properties[key]=int(headers[key],base=16)
+                else:
+                    self.properties[key]=headers[key]
+        self.ip_address = headers["location"].split("://")[1].split(":")[0]
+        self.port = headers["location"].split("://")[1].split(":")[1]
         self.seq = 0
         # Key is the message sequence, value is a callable
         self.pending_reply = {}
@@ -114,11 +127,13 @@ class XiaomiBulb(object):
         self.musicm = False
         self.timeout_secs = DEFAULT_TIMEOUT
         self.default_attempts = DEFAULT_ATTEMPTS
-        self.default_callb = lambda x,y: None
+        self.default_callb = lambda x: None
+        self.registered = False
 
+    def activate(self):
         #Start the transports
         for x in range(self.tnb):
-            listen = loop.create_connection(
+            listen = self.loop.create_connection(
                     partial(XiaomiConnect,self),
                         self.ip_address,self.port)
             xx = aio.ensure_future(listen)
@@ -132,15 +147,13 @@ class XiaomiBulb(object):
         self.seq = ( self.seq + 1 ) % 256
         return self.seq
 
-    async def try_sending(self,cid,msg,timeout_secs=None, max_attempts=None):
+    async def try_sending(self,msg,timeout_secs=None, max_attempts=None):
         """Coroutine used to send message to the device when a response is needed.
 
         This coroutine will try to send up to max_attempts time the message, waiting timeout_secs
         for an answer. If no answer is received, it will consider that the device is no longer
         accessible and will unregister it.
 
-            :param cid: command sequence id
-            :type cid: int
             :param msg: The message to send
             :type msg: str
             :param timeout_secs: Number of seconds to wait for a response
@@ -157,13 +170,15 @@ class XiaomiBulb(object):
 
         attempts = 0
         while attempts < max_attempts:
-            if msg['id'] not inself.pending_reply: return
+            cid = msg['id']
+            if cid not in self.pending_reply: return
             event = aio.Event()
-            self.pending_reply[cid][1]= event
+            self.pending_reply[cid][0]= event
             attempts += 1
             myidx=self.tidx
             self.tidx = (self.tidx +1)%len(self.transports)
-            self.transports[myidx].sendto(json.dumps(msg))
+            print("Sending {}".format(msg))
+            self.transports[myidx].write(json.dumps(msg))
             try:
                 myresult = await aio.wait_for(event.wait(),timeout_secs)
                 break
@@ -175,37 +190,43 @@ class XiaomiBulb(object):
                             callb(self, None)
                     del(self.pending_reply[msg['id']])
                     #It's dead Jim
-                    self.unregister()
+                    self.unregister(self)
 
 
     def send_msg(self,msg, callb=None, timeout_secs=None, max_attempts=None):
         """ Let's send
         """
         cid= self.seq_next()
-        nsg['id']=cid
+        msg['id']=cid
         self.pending_reply[cid]=[None,callb]
         xxx=self.loop.create_task(self.try_sending(msg,timeout_secs, max_attempts))
 
 
     def data_received(self,data):
-        #Do somrthing
-        try:
-            received_data = json.loads(data)
-            if "id" in received_data:
-                cid = int(received_data['id'])
-                if cid in self.pending_reply:
-                    myevent,callb = self.pending_reply[cid]
-                    myevent.set()
+        #Do something
+        #try:
+        print("Received raw data: {}".format(data))
+        received_data = json.loads(data)
+        print("Received data: {}".format(received_data))
+        if "id" in received_data:
+            cid = int(received_data['id'])
+            if cid in self.pending_reply:
+                myevent,callb = self.pending_reply[cid]
+                myevent.set()
+                if callb:
                     callb(received_data)
-                    del(self.pending_reply[cid])
+                del(self.pending_reply[cid])
 
-             elif 'method' in received_data:
-                 if received_data["method"] == "props":
-                    for prop,val in received_data["params"].items():
-                        if prop in PROPERTIES:
-                            self.properties[prop]=val
+        elif 'method' in received_data:
+            if received_data["method"] == "props":
+                for prop,val in received_data["params"].items():
+                    if prop in PROPERTIES:
+                        self.properties[prop]=val
 
-                    self.default_callb(received_data["params"])
+            self.default_callb(received_data["params"])
+        #except:
+            #pass
+
 
 
     def register_callback(self,callb):
@@ -216,6 +237,7 @@ class XiaomiBulb(object):
 
         """
         self.default_callb = callb
+
     #
     # Xiaomi method
     #
@@ -231,7 +253,7 @@ class XiaomiBulb(object):
             :rtype: bool
         """
         if "get_prop" in self.support:
-            self.send_msg({"method":"get_prop","params":props},self.pending_reply[cid]=partial(self._get_prop_reply,props,callb))
+            self.send_msg({"method":"get_prop","params":props},partial(self._get_prop_reply,props,callb))
             return True
         return False
 
@@ -281,10 +303,10 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "set_ct_abx" in self.support:
+        if self.properties["power"] == "on" and "set_ct_abx" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_ct_abx", "param": [temp, effect,duration]},partial(self._cmd_reply,{"ct":temp},callb))
+            self.send_msg({ "method": "set_ct_abx", "params": [temp, effect,duration]},callb)
             return True
         return False
 
@@ -303,11 +325,11 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "set_rgb" in self.support:
+        if self.properties["power"] == "on" and "set_rgb" in self.support:
             cid= self.seq_next()
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_rgb", "param": [rgb, effect,duration] },partial(self._cmd_reply,{"rgb":rgb},callb))
+            self.send_msg({ "method": "set_rgb", "params": [rgb, effect,duration]}, callb)
             return True
         return False
 
@@ -328,10 +350,10 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "set_hsv" in self.support:
+        if self.properties["power"] == "on" and "set_hsv" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_hsv", "param": [hue, sat, effect,duration] }), partial(self._cmd_reply,{"hue":hue,"sat":sat},callb))
+            self.send_msg({ "method": "set_hsv", "params": [hue, sat, effect,duration] }, callb)
             return True
         return False
 
@@ -350,10 +372,10 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "set_bright" in self.support:
+        if self.properties["power"] == "on" and "set_bright" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_bright", "param": [bright, effect,duration] },partial(self._cmd_reply,{"bright":bright},callb))
+            self.send_msg({ "method": "set_bright", "params": [bright, effect,duration] }, callb)
             return True
         return False
 
@@ -378,9 +400,9 @@ class XiaomiBulb(object):
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
             if mode:
-                self.send_msg({ "method": "set_power", "param": [power, effect,duration,mode] },partial(self._cmd_reply,{"power":power},callb))
+                self.send_msg({ "method": "set_power", "params": [power, effect,duration,mode] },callb)
             else:
-                self.send_msg({ "method": "set_power", "param": [power, effect,duration] },partial(self._cmd_reply,{"power":power},callb))
+                self.send_msg({ "method": "set_power", "params": [power, effect,duration] },callb)
             return True
         return False
 
@@ -395,7 +417,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_default" in self.support:
-            self.send_msg({ "method": "set_default", "param": []},partial(self._cmd_reply,{},callb))
+            self.send_msg({ "method": "set_default", "params": []},callb)
             return True
         return False
 
@@ -413,10 +435,10 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "bg_set_ct_abx" in self.support:
+        if self.properties["power"] == "on" and "bg_set_ct_abx" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "bg_set_ct_abx", "param": [temp, effect,duration]},partial(self._cmd_reply,{"bg_ct":temp},callb))
+            self.send_msg({ "method": "bg_set_ct_abx", "params": [temp, effect,duration]},callb)
             return True
         return False
 
@@ -435,10 +457,10 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "bg_set_rgb" in self.support:
+        if self.properties["power"] == "on" and "bg_set_rgb" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_rgb", "param": [rgb, effect,duration] },partial(self._cmd_reply,{"bg_rgb":rgb},callb))
+            self.send_msg({ "method": "set_rgb", "params": [rgb, effect,duration] },callb)
             return True
         return False
 
@@ -459,10 +481,10 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "bg_set_hsv" in self.support:
+        if self.properties["power"] == "on" and "bg_set_hsv" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "bg_set_hsv", "param": [hue, sat, effect,duration] },partial(self._cmd_reply,{"bg_hue":hue,"bg_sat":sat},callb))
+            self.send_msg({ "method": "bg_set_hsv", "params": [hue, sat, effect,duration] },callb)
             return True
         return False
 
@@ -477,7 +499,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "toggle" in self.support:
-            self.send_msg({ "method": "toggle", "param": []},partial(self._cmd_reply,{},callb))
+            self.send_msg({ "method": "toggle", "params": []},callb)
             return True
         return False
 
@@ -491,7 +513,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "bg_toggle" in self.support:
-            self.send_msg({ "method": "bg_toggle", "param": []},partial(self._cmd_reply,{},callb))
+            self.send_msg({ "method": "bg_toggle", "params": []},callb)
             return True
         return False
 
@@ -505,7 +527,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "bg_toggle" in self.support:
-            self.send_msg({ "method": "bg_toggle", "param": []},partial(self._cmd_reply,{},callb))
+            self.send_msg({ "method": "bg_toggle", "params": []},callb)
             return True
         return False
 
@@ -526,14 +548,14 @@ class XiaomiBulb(object):
                                 value  the value  rgb or temperature
                                 brightness: the brightness
 
-            :type brightness: list
+            :type flex: list
             :param callb: a callback function. Given the list of values as parameters
             :type callb: callable
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "start_cf" in self.support:
-            self.send_msg({ "method": "start_cf", "param": [count, ["start","stop","off"].index(endstate.lower()),flex] },partial(self._cmd_reply,{"bright":bright},callb))
+        if self.properties["power"] == "on" and "start_cf" in self.support:
+            self.send_msg({ "method": "start_cf", "params": [count, ["start","stop","off"].index(endstate.lower()),",".join(map(str,flex))] },callb)
             return True
         return False
 
@@ -548,7 +570,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "stop_cf" in self.support:
-            self.send_msg({ "method": "stop_cf", "param": []},partial(self._cmd_reply,{},callb))
+            self.send_msg({ "method": "stop_cf", "params": []},callb)
             return True
         return False
 
@@ -565,7 +587,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "param": ["color", rgb, brightness] })),partial(self._cmd_reply,{"rgb":rgb, "bright": brightness, "power":"on"},callb))
+            self.send_msg({ "method": "set_scene", "params": ["color", rgb, brightness] }, callb)
             return True
         return False
 
@@ -584,7 +606,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "param": ["hsv", hue, sat, brightness] },partial(self._cmd_reply,{"hue":hue, "set":sat,"bright": brightness, "power":"on"},callb))
+            self.send_msg({ "method": "set_scene", "params": ["hsv", hue, sat, brightness] },callb)
             return True
         return False
 
@@ -602,7 +624,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "param": ["ct", temperature, brightness] },partial(self._cmd_reply,{"ct":temperature, "bright": brightness, "power":"on"},callb))
+            self.send_msg({ "method": "set_scene", "params": ["ct", temperature, brightness] },callb)
             return True
         return False
 
@@ -630,7 +652,7 @@ class XiaomiBulb(object):
         """
 
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "param": ["cf", count, ["start","stop","off"].index(endstate.lower()),flex] },partial(self._cmd_reply,{"cf":temperature, "bright": brightness, "power":"on"},callb))
+            self.send_msg({ "method": "set_scene", "params": ["cf", count, ["start","stop","off"].index(endstate.lower()),flex] },callb)
             return True
         return False
 
@@ -648,7 +670,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "param": ["auto_delay_off", brightness, delay] },partial(self._cmd_reply,{"bright": brightness, "power":"on"},callb))
+            self.send_msg({ "method": "set_scene", "params": ["auto_delay_off", brightness, delay] },callb)
             return True
         return False
 
@@ -665,8 +687,8 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "cron_add" in self.support:
-            self.send_msg({ "method": "cron_add", "param": [["off","on"].index(action.lower()),delay] },partial(self._cmd_reply,{},callb))
+        if self.properties["power"] == "on" and "cron_add" in self.support:
+            self.send_msg({ "method": "cron_add", "params": [["off","on"].index(action.lower()),delay] },callb)
             return True
         return False
 
@@ -681,8 +703,8 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "cron_del" in self.support:
-            self.send_msg({ "method": "cron_del", "param": [["off","on"].index(action.lower())] },partial(self._cmd_reply,{},callb))
+        if self.properties["power"] == "on" and "cron_del" in self.support:
+            self.send_msg({ "method": "cron_del", "params": [["off","on"].index(action.lower())] },callb)
             return True
         return False
 
@@ -697,8 +719,8 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if self.property["power"] == "on" and "cron_get" in self.support:
-            self.send_msg({ "method": "cron_get", "param": [["off","on"].index(action.lower())] },partial(self._cmd_reply,{},callb))
+        if self.properties["power"] == "on" and "cron_get" in self.support:
+            self.send_msg({ "method": "cron_get", "params": [["off","on"].index(action.lower())] },callb)
             return True
         return False
 
@@ -719,7 +741,7 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_name" in self.support:
-            self.send_msg({ "method": "cron_add", "param": [name] },partial(self._cmd_reply,{},callb))
+            self.send_msg({ "method": "cron_add", "params": [name] },callb)
             return True
         return False
 
@@ -732,16 +754,16 @@ class XiaomiBulb(object):
         return False
         """
         self.transports.append(conn)
+        print("Registering connection {} for {}".format(conn,self.bulb_id))
         if not self.registered:
             self.registered = True
-            return True
-        return False
             if self.parent:
                 self.parent.register(self)
 
     def unregister(self,conn):
         """Proxy method to unregister the device with the parent.
         """
+        print("Unregistering connection {} for {}".format(conn,self.bulb_id))
         for x in range(len(self.transports)):
             if self.transports[x].id == conn.id:
                 del(self.transports[x])
