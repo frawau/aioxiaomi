@@ -28,6 +28,9 @@ import json
 from functools import partial
 from enum import IntEnum
 from uuid import uuid4
+import datetime as dt
+from random import randint
+import socket
 
 PROPERTIES = ["power", "bg_power", "bright", "bg_bright", "nl_br", "ct", "bg_ct",
                "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat", "color_mode","bg_lmode",
@@ -39,6 +42,7 @@ HEX_PROPERTIES= ["id"]
 
 DEFAULT_TIMEOUT=0.5 # How long to wait for a response
 DEFAULT_ATTEMPTS=1 # How many times to try
+MESSAGE_WINDOW = 256
 
 class Mode(IntEnum):
     Default = 0
@@ -50,6 +54,90 @@ class Mode(IntEnum):
     Sleep = 7
 
 
+class Queue(object):
+    """A simple queue implementation. Very basic
+
+    """
+    def __init__(self):
+        self.queue=[]
+
+    def get(self):
+        try:
+            v = self.queue[0]
+            self.queue= self.queue[1:]
+            return v
+        except:
+            return None
+
+    def put(self,x):
+        self.queue.append(x)
+
+    def retrieve(self,idx):
+        if idx < len(self.queue):
+            v = self.queue[idx]
+            self.queue = self.queue[:idx]+self.queue[idx+1:]
+            return v
+        else:
+            return None
+
+    def empty(self):
+        return len(self.queue)==0
+
+    def __len__(self):
+        return len(self.queue)
+
+
+class XiaomiMusicConnect(aio.Protocol):
+    """ This class is a single server connection to a Xiaomi device
+
+        :param parent: The parent object. Must have register, unregister and data_received methods
+        :type parent: object
+    """
+
+    def __init__(self, parent, future,autoclose=False):
+        self.parent = parent
+        self.future = future
+        self.autoclose = autoclose
+        self.transport = None
+        self.last_sent = dt.datetime.now()
+    #
+    # Protocol Methods
+    #
+
+    def connection_made(self, transport):
+        """Method run when the connection to the lamp is established
+        """
+
+        #print("Got connection from {}".format(transport.get_extra_info('peername')))
+        self.transport = transport
+        self.future.set_result(self)
+        if self.autoclose:
+            xx = self.parent.loop.create_task(self._autoclose_me())
+
+    def connection_lost(self, error):
+        self.parent.music_mode_off()
+
+    def data_received(self,data):
+        #self.parent.data_received(data)
+        #print("MUSIC Received {}".format(data)) #Are we supposed to receive something?
+        pass
+
+    def write(self,msg):
+        #print("Music Sending {}".format(msg))
+        self.last_sent = dt.datetime.now()
+        self.transport.write((msg+"\r\n").encode())
+
+    def close(self):
+        self.transport.close()
+
+    async def _autoclose_me(self):
+        while True:
+            if dt.datetime.now()-self.last_sent > dt.timedelta(seconds=5):
+                #print("Time to cleanup")
+                self.close()
+                return
+            await aio.sleep(1)
+
 class XiaomiConnect(aio.Protocol):
     """ This class is a single unicast connection to a Xiaomi device
 
@@ -60,7 +148,8 @@ class XiaomiConnect(aio.Protocol):
     def __init__(self, parent):
         self.parent = parent
         self.id = uuid4()
-        self.last_sent = 0
+        self.last_sent = dt.datetime.now() - dt.timedelta(seconds=2)
+        self.ip_addr = ""
     #
     # Protocol Methods
     #
@@ -71,7 +160,7 @@ class XiaomiConnect(aio.Protocol):
         self.transport = transport
         self.parent.register(self)
 
-    def connection_lost(self):
+    def connection_lost(self, error):
         if self.parent:
             self.parent.unregister(self)
 
@@ -79,6 +168,8 @@ class XiaomiConnect(aio.Protocol):
         self.parent.data_received(data)
 
     def write(self,msg):
+        #print("Sending {}".format(msg))
+        self.last_sent = dt.datetime.now()
         self.transport.write((msg+"\r\n").encode())
 
     def close(self):
@@ -89,7 +180,8 @@ class XiaomiBulb(object):
     """This correspond to a single light bulb.
 
     This handles all the communications with a single bulb. This is created upon
-    discovery of the bulb.
+    discovery of the bulb.from queue import Queue
+
 
         :param loop: The async loop being used
         :type loop: asyncio.EventLoop
@@ -129,6 +221,11 @@ class XiaomiBulb(object):
         self.default_attempts = DEFAULT_ATTEMPTS
         self.default_callb = lambda x: None
         self.registered = False
+        self.message_queue=Queue()
+        self.queue_limit = 0 #No limit
+        self.queue_policy = "drop" #What to do when limit is reached
+        self.is_sending = False
+        self.my_ip_addr = ""
 
     def activate(self):
         #Start the transports
@@ -144,18 +241,16 @@ class XiaomiBulb(object):
             :returns: next number in sequensce (modulo 128)
             :rtype: int
         """
-        self.seq = ( self.seq + 1 ) % 256
+        self.seq = ( self.seq + 1 ) % MESSAGE_WINDOW
         return self.seq
 
-    async def try_sending(self,msg,timeout_secs=None, max_attempts=None):
+    async def try_sending(self,timeout_secs=None, max_attempts=None):
         """Coroutine used to send message to the device when a response is needed.
 
         This coroutine will try to send up to max_attempts time the message, waiting timeout_secs
         for an answer. If no answer is received, it will consider that the device is no longer
         accessible and will unregister it.
 
-            :param msg: The message to send
-            :type msg: str
             :param timeout_secs: Number of seconds to wait for a response
             :type timeout_secs: int
             :param max_attempts: .
@@ -167,65 +262,125 @@ class XiaomiBulb(object):
             timeout_secs = DEFAULT_TIMEOUT
         if max_attempts is None:
             max_attempts = DEFAULT_ATTEMPTS
+        mydelta=dt.timedelta(seconds=1)
+        dodelay = len(self.transports)-1
+        while not self.message_queue.empty():
+            callb,msg = self.message_queue.get()
+            if self.musicm:
+                if isinstance(self.musicm,aio.Future):
+                    x=await self.musicm
+                    self.musicm = self.musicm.result()
+                self.musicm.write(json.dumps(msg))
+                if callb:
+                    callb({"id":1, "result":["ok"]})
+                if self.message_queue.empty():
+                    await aio.sleep(0.1)
+            else:
+                attempts = 0
+                while attempts < max_attempts:
+                    now = dt.datetime.now()
+                    cid = msg['id']
+                    event = aio.Event()
+                    self.pending_reply[cid]= [event, callb]
+                    attempts += 1
+                    myidx=self.tidx
+                    self.tidx = (self.tidx +1)%len(self.transports)
+                    diff = now - self.transports[myidx].last_sent
+                    if diff < mydelta:
+                        await aio.sleep((mydelta-diff).total_seconds())
+                    self.transports[myidx].write(json.dumps(msg))
+                    try:
+                        myresult = await aio.wait_for(event.wait(),timeout_secs)
+                        break
+                    except Exception as inst:
+                        if attempts >= max_attempts:
+                            if cid in self.pending_reply:
+                                callb =self.pending_reply[cid][1]
+                                if callb:
+                                    callb(self, None)
+                                del(self.pending_reply[cid])
+                            #It's dead Jim
+                            self.unregister(self.transports[myidx])
+                            if len(self.transports) == 0:
+                                self.is_sending = False
+                                return
+                if dodelay:
+                    dodelay -= 1
+                    await aio.sleep(1.0/len(self.transports))
+        self.is_sending = False
 
-        attempts = 0
-        while attempts < max_attempts:
-            cid = msg['id']
-            if cid not in self.pending_reply: return
-            event = aio.Event()
-            self.pending_reply[cid][0]= event
-            attempts += 1
-            myidx=self.tidx
-            self.tidx = (self.tidx +1)%len(self.transports)
-            print("Sending {}".format(msg))
-            self.transports[myidx].write(json.dumps(msg))
-            try:
-                myresult = await aio.wait_for(event.wait(),timeout_secs)
-                break
-            except Exception as inst:
-                if attempts >= max_attempts:
-                    if msg['id'] in self.pending_reply:
-                        callb =self.pending_reply[msg['id']][1]
-                        if callb:
-                            callb(self, None)
-                    del(self.pending_reply[msg['id']])
-                    #It's dead Jim
-                    self.unregister(self)
-
+    def send_msg_noqueue(self,msg, callb=None):
+        """Sending a message by-passing the queue
+        """
+        cid= self.seq_next()
+        msg['id']=cid
+        if callb:
+            self.pending_reply[cid]= [None, callb]
+        self.transports[0].write(json.dumps(msg))
 
     def send_msg(self,msg, callb=None, timeout_secs=None, max_attempts=None):
         """ Let's send
         """
-        cid= self.seq_next()
-        msg['id']=cid
-        self.pending_reply[cid]=[None,callb]
-        xxx=self.loop.create_task(self.try_sending(msg,timeout_secs, max_attempts))
+        if self.queue_limit == 0 or len(self.message_queue)< self.queue_limit:
+            cid= self.seq_next()
+            msg['id']=cid
+            self.message_queue.put((callb,msg))
+            if not self.is_sending:
+                self.is_sending = True
+                xxx=self.loop.create_task(self.try_sending(timeout_secs, max_attempts))
+        elif self.queue_limit > 0:
+            if self.queue_policy != "drop":
+                cid= self.seq_next()
+                msg['id']=cid
+                self.message_queue.put((callb,msg))
+                if self.queue_policy == "head":
+                    x=self.message_queue.get()
+                    del(x)
+                elif self.queue_policy == "adapt":
+                    if not self.musicm:
+                        while True:
+                            try:
+                                myport = randint(9000, 24376)
+                                sock = socket.socket()
+                                sock.bind((self.my_ip_addr,myport)) #Make sure the port is free
+                                break
+                            except:
+                                pass
+                        self.musicm = aio.Future()
+                        coro=self.loop.create_server(partial(XiaomiMusicConnect,self,self.musicm,True), sock=sock)
+                        #xx = self.loop.create_task(coro)
+                        xx = aio.ensure_future(coro)
+                        #self.transports[0].write(json.dumps({'id':MESSAGE_WINDOW+1, "method":"set_music","params":[1,self.my_ip_addr,myport]}))
+                        self.loop.call_soon(self.set_music,"start",self.my_ip_addr,myport)
+                else :#self.queue_policy == "random":
+                    idx = randint(0,len(self.message_queue)-1)
+                    x=self.message_queue.retrieve(idx)
+                    del(x)
 
 
     def data_received(self,data):
         #Do something
-        #try:
-        print("Received raw data: {}".format(data))
-        received_data = json.loads(data)
-        print("Received data: {}".format(received_data))
-        if "id" in received_data:
-            cid = int(received_data['id'])
-            if cid in self.pending_reply:
-                myevent,callb = self.pending_reply[cid]
-                myevent.set()
-                if callb:
-                    callb(received_data)
-                del(self.pending_reply[cid])
+        try:
+            #print("Received raw data: {}".format(data))
+            received_data = json.loads(data)
+            if "id" in received_data:
+                cid = int(received_data['id'])
+                if cid in self.pending_reply:
+                    myevent,callb = self.pending_reply[cid]
+                    myevent.set()
+                    if callb:
+                        callb(received_data)
+                    del(self.pending_reply[cid])
 
-        elif 'method' in received_data:
-            if received_data["method"] == "props":
-                for prop,val in received_data["params"].items():
-                    if prop in PROPERTIES:
-                        self.properties[prop]=val
+            elif 'method' in received_data:
+                if received_data["method"] == "props":
+                    for prop,val in received_data["params"].items():
+                        if prop in PROPERTIES:
+                            self.properties[prop]=val
 
-            self.default_callb(received_data["params"])
-        #except:
-            #pass
+                self.default_callb(received_data["params"])
+        except:
+            pass
 
 
 
@@ -727,7 +882,28 @@ class XiaomiBulb(object):
     #TODO implement these
     #def set_adjust 2 string(action) string(prop)
 
-    #def set_music 1 ~ 3 int(action) string(host) int(port)
+    def set_music (self,action, host,port, callb=None):
+
+        """Start music mode.
+
+        Before starting the music mode, one must setup a server
+        waiting at host:port
+
+            :param action: start or stop
+            :type action: str
+            :param host: Server where the bulb has to connect
+            :type host: str
+            :param port: port where the bulb has to connect
+            :type port: int
+            :param callb: a callback function. Given the list of values as parameters
+            :type callb: callable
+            :returns: None
+            :rtype: None
+        """
+        if "set_music" in self.support:
+            self.send_msg_noqueue({ "method": "set_music", "params": [["stop","start"].index(action.lower()),host,port] },callb)
+            return True
+        return False
 
     def set_name(self, name, callb=None):
 
@@ -740,8 +916,8 @@ class XiaomiBulb(object):
             :returns: None
             :rtype: None
         """
-        if "set_name" in self.support:
-            self.send_msg({ "method": "cron_add", "params": [name] },callb)
+        if "set" in self.support:
+            self.send_msg({ "method": "set_name", "params": [name] },callb)
             return True
         return False
 
@@ -754,8 +930,9 @@ class XiaomiBulb(object):
         return False
         """
         self.transports.append(conn)
-        print("Registering connection {} for {}".format(conn,self.bulb_id))
+        #print("Registering connection {} for {}".format(conn,self.bulb_id))
         if not self.registered:
+            self.my_ip_addr = conn.transport.get_extra_info('sockname')[0]
             self.registered = True
             if self.parent:
                 self.parent.register(self)
@@ -763,7 +940,7 @@ class XiaomiBulb(object):
     def unregister(self,conn):
         """Proxy method to unregister the device with the parent.
         """
-        print("Unregistering connection {} for {}".format(conn,self.bulb_id))
+        #print("Unregistering connection {} for {}".format(conn,self.bulb_id))
         for x in range(len(self.transports)):
             if self.transports[x].id == conn.id:
                 del(self.transports[x])
@@ -781,6 +958,38 @@ class XiaomiBulb(object):
         """
         for x in self.tranports:
             x.close()
+
+    def set_connections(self,nb):
+        """Function to set the number of connection to open to a single bulb.
+
+        By default, Xiaomi limits to 1 command per second per channel. You can
+        increase that by opening more channels. In any case, the overall limit is 144
+        commands per seconds, so more than 2 will create issues. This MUST be used before
+        the bulb is activated. After that it has no effect.
+
+        :param nb: The number of channels to open 1 to 4
+        :type nb: int
+        """
+        self.tnb = nb
+
+    def set_queue_limit(self,length,policy="drop"):
+        """Set the queue size limit and the policy, what to do when the size limit is reached
+
+            :param length: The maximum length of the message sending queue. 0 means no limit
+            :type length: int
+            :param policy: What to do when the queue size limit is reached. Values can be:
+                    drop: drop the extra messages
+                    head: drop the head of the queu
+                    random: drop a random message in the queue
+                    adapt: switch to "music" mode and send
+        """
+        self.queue_limit = length
+        self.queue_policy = policy
+
+    def music_mode_off(self):
+        if self.musicm:
+            self.musicm.close()
+            self.musicm = False
 
     #A couple of proxies
     @property

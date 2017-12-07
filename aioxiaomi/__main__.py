@@ -26,6 +26,8 @@ import asyncio as aio
 import aioxiaomi as aiox
 from functools import partial
 import argparse
+from random import randint
+
 UDP_BROADCAST_PORT = 56700
 
 #Simple bulb control from console
@@ -38,9 +40,9 @@ class bulbs():
         self.boi=None #bulb of interest
 
     def register(self,bulb):
-        print("Adding bulb {} {} {}".format(bulb,bulb.name,bulb.bulb_id))
+        #print("Adding bulb {} {} {}".format(bulb,bulb.name,bulb.bulb_id))
         self.bulbs.append(bulb)
-        self.bulbs.sort(key=lambda x: x.name or x.bulb_id )
+        self.bulbs.sort(key=lambda x: x.name or str(x.bulb_id) )
         if opts.extra:
             bulb.register_callback(lambda y: print("Unexpected message: %s"%str(y)))
         try:
@@ -70,8 +72,10 @@ class bulbs():
                     break
 
         if not found:
-            print("Activating bulb {} with id {}".format(newbulb,newbulb.bulb_id))
+            #print("Activating bulb {} with id {}".format(newbulb,newbulb.bulb_id))
             self.pending_bulbs.append(newbulb)
+            newbulb.set_connections(2) #Open 2 channels to the bulb
+            newbulb.set_queue_limit(15,"adapt")
             newbulb.activate()
         else:
             del(newbulb)
@@ -82,7 +86,7 @@ def readin():
     """Reading from stdin and displaying menu"""
 
     selection = sys.stdin.readline().strip("\n")
-    MyBulbs.bulbs.sort(key=lambda x: x.name or x.bulb_id)
+    MyBulbs.bulbs.sort(key=lambda x: x.name or str(x.bulb_id))
     lov=[ x for x in selection.split(" ") if x != ""]
     if lov:
         if MyBulbs.boi:
@@ -123,10 +127,14 @@ def readin():
                 elif int(lov[0]) == 4:
                     for prop in MyBulbs.boi.properties:
                         print("\t{}:\t{}".format(prop.title(),MyBulbs.boi.properties[prop]))
+                    print("\tMessage Queue:\t{}".format(len(MyBulbs.boi.message_queue)))
                     MyBulbs.boi=None
                 elif int(lov[0]) == 5:
-                    print("Firmware: {}".format(MyBulbs.boi.properties["fw_ver"]))
-                    MyBulbs.boi=None
+                    try:
+                        MyBulbs.boi.set_name(" ".join(lov[1:]))
+                        MyBulbs.boi=None
+                    except:
+                        print("Error: Could not set name\n")
                 elif int(lov[0]) == 6:
                     if len(lov) >3:
                         #try:
@@ -139,6 +147,16 @@ def readin():
                             #print("Error: For pulse Red (0-255), Green (0-255) and Blue (0-255) must be numbers.\n")
                     else:
                         print("Error: For pulse you must indicate Red (0-255), Green (0-255) and Blue (0-255)\n")
+                elif int(lov[0]) == 7:
+                    #try:
+                    count = int(lov[1])
+                    for x in range(0,count):
+                        thiscol = randint(0,16777215)
+                        MyBulbs.boi.set_rgb_direct(thiscol,MyBulbs.boi.brightness)
+                    MyBulbs.boi=None
+                    #except:
+                        #print("Error: For Stress you must specify a count (Integer)\n")
+
             #except:
                 #print ("\nError: Selection must be a number.\n")
         else:
@@ -158,8 +176,9 @@ def readin():
         print("\t[2]\tWhite (Brigthness Temperature)")
         print("\t[3]\tColour (Hue Saturation Value)")
         print("\t[4]\tInfo")
-        print("\t[5]\tFirmware")
+        print("\t[5]\tSet Name (Bulb name)")
         print("\t[6]\tPulse (Red Green Blue)")
+        print("\t[7]\tStress (Number of colour changes)")
         print("")
         print("\t[0]\tBack to bulb selection")
     else:
@@ -196,6 +215,7 @@ try:
 except:
     pass
 finally:
+    print("Exiting at user's request.")
     server.close()
     loop.remove_reader(sys.stdin)
     loop.run_until_complete(aio.sleep(2))

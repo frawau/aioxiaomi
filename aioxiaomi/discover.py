@@ -14,22 +14,10 @@ class UPnPLoopbackException(Exception):
     """
     Using loopback interface as callback IP.
     """
-class upnp_info(object):
-    def __init__(self):
-        self.name = None
-        self.type = None
-        self.port = None
-        self.address = None
-        self.mac = None
-        self.properties = {}
-
-    def __repr__(self):
-        repr = 'name:\t{}\ntype:\t{}\nport:\t{}\naddress:{}\nmac:\t{}\nproperties:\n'.format(self.name,self.type, self.port, self.address, self.mac)
-        for x,y in self.properties.items():
-            repr += "\t{}:\t{}\n".format(x,y)
-        return repr
 
 class XiaomiUPnP(aio.Protocol):
+    """Class used to monitor UPnP messages from Yeelight bulbs.
+    """
     def __init__(self, loop,addr,handler,future):
         super().__init__()
         self.loop = loop
@@ -48,10 +36,7 @@ class XiaomiUPnP(aio.Protocol):
         sock.settimeout(3)
         addrinfo = socket.getaddrinfo(self.addr, None)[0]
         ttl = pack('@i', 1)
-        if addrinfo[0] == socket.AF_INET: # IPv4
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
-        else:
-            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, ttl)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
 
     def _broadcast(self):
         request = '\r\n'.join(("M-SEARCH * HTTP/1.1",
@@ -64,9 +49,7 @@ class XiaomiUPnP(aio.Protocol):
 
 
     def datagram_received(self, data, addr):
-        info = upnp_info()
-        info.address = addr[0]
-        info.port = addr[1]
+        #print("Received datagram: {}".format(data))
         headers = {}
         for line in data.decode("ascii").split("\r\n"):
             try:
