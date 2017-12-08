@@ -94,12 +94,13 @@ class XiaomiMusicConnect(aio.Protocol):
         :type parent: object
     """
 
-    def __init__(self, parent, future,autoclose=False):
+    def __init__(self, parent, future,autoclose=0):
         self.parent = parent
         self.future = future
         self.autoclose = autoclose
         self.transport = None
         self.last_sent = dt.datetime.now()
+        print("Music Mode Server Created")
     #
     # Protocol Methods
     #
@@ -108,7 +109,7 @@ class XiaomiMusicConnect(aio.Protocol):
         """Method run when the connection to the lamp is established
         """
 
-        #print("Got connection from {}".format(transport.get_extra_info('peername')))
+        print("Got connection from {}".format(transport.get_extra_info('peername')))
         self.transport = transport
         self.future.set_result(self)
         if self.autoclose:
@@ -119,11 +120,10 @@ class XiaomiMusicConnect(aio.Protocol):
 
     def data_received(self,data):
         #self.parent.data_received(data)
-        #print("MUSIC Received {}".format(data)) #Are we supposed to receive something?
-        pass
+        print("MUSIC Received {}".format(data)) #Are we supposed to receive something?
 
     def write(self,msg):
-        #print("Music Sending {}".format(msg))
+        print("Music Sending {}".format(msg))
         self.last_sent = dt.datetime.now()
         self.transport.write((msg+"\r\n").encode())
 
@@ -132,8 +132,8 @@ class XiaomiMusicConnect(aio.Protocol):
 
     async def _autoclose_me(self):
         while True:
-            if dt.datetime.now()-self.last_sent > dt.timedelta(seconds=5):
-                #print("Time to cleanup")
+            if dt.datetime.now()-self.last_sent > dt.timedelta(seconds=self.autoclose):
+                print("Time to cleanup")
                 self.close()
                 return
             await aio.sleep(1)
@@ -168,7 +168,7 @@ class XiaomiConnect(aio.Protocol):
         self.parent.data_received(data)
 
     def write(self,msg):
-        #print("Sending {}".format(msg))
+        print("Sending {}".format(msg))
         self.last_sent = dt.datetime.now()
         self.transport.write((msg+"\r\n").encode())
 
@@ -268,8 +268,10 @@ class XiaomiBulb(object):
             callb,msg = self.message_queue.get()
             if self.musicm:
                 if isinstance(self.musicm,aio.Future):
+                    print("Awaiting Future {}".format(self.musicm))
                     x=await self.musicm
                     self.musicm = self.musicm.result()
+                    print("Future gave {}".format(self.musicm))
                 self.musicm.write(json.dumps(msg))
                 if callb:
                     callb({"id":1, "result":["ok"]})
@@ -337,31 +339,16 @@ class XiaomiBulb(object):
                     x=self.message_queue.get()
                     del(x)
                 elif self.queue_policy == "adapt":
-                    if not self.musicm:
-                        while True:
-                            try:
-                                myport = randint(9000, 24376)
-                                sock = socket.socket()
-                                sock.bind((self.my_ip_addr,myport)) #Make sure the port is free
-                                break
-                            except:
-                                pass
-                        self.musicm = aio.Future()
-                        coro=self.loop.create_server(partial(XiaomiMusicConnect,self,self.musicm,True), sock=sock)
-                        #xx = self.loop.create_task(coro)
-                        xx = aio.ensure_future(coro)
-                        #self.transports[0].write(json.dumps({'id':MESSAGE_WINDOW+1, "method":"set_music","params":[1,self.my_ip_addr,myport]}))
-                        self.loop.call_soon(self.set_music,"start",self.my_ip_addr,myport)
+                    self.set_music("start",5)
                 else :#self.queue_policy == "random":
                     idx = randint(0,len(self.message_queue)-1)
                     x=self.message_queue.retrieve(idx)
                     del(x)
 
-
     def data_received(self,data):
         #Do something
         try:
-            #print("Received raw data: {}".format(data))
+            print("Received raw data: {}".format(data))
             received_data = json.loads(data)
             if "id" in received_data:
                 cid = int(received_data['id'])
@@ -882,7 +869,7 @@ class XiaomiBulb(object):
     #TODO implement these
     #def set_adjust 2 string(action) string(prop)
 
-    def set_music (self,action, host,port, callb=None):
+    def set_music (self,action, delay=5.0, callb=None):
 
         """Start music mode.
 
@@ -891,17 +878,34 @@ class XiaomiBulb(object):
 
             :param action: start or stop
             :type action: str
-            :param host: Server where the bulb has to connect
-            :type host: str
-            :param port: port where the bulb has to connect
-            :type port: int
+            :param delay: Idle delay before closing
+            :type delay: float
             :param callb: a callback function. Given the list of values as parameters
             :type callb: callable
             :returns: None
             :rtype: None
         """
         if "set_music" in self.support:
-            self.send_msg_noqueue({ "method": "set_music", "params": [["stop","start"].index(action.lower()),host,port] },callb)
+
+            if action.lower() =="start" and not self.musicm:
+                while True:
+                    try:
+                        myport = randint(9000, 24376)
+                        sock = socket.socket()
+                        sock.bind((self.my_ip_addr,myport)) #Make sure the port is free
+                        break
+                    except:
+                        pass
+                self.musicm = aio.Future()
+                print("Start Future {}".format(self.musicm))
+                coro=self.loop.create_server(partial(XiaomiMusicConnect,self,self.musicm,delay), sock=sock)
+                xx = aio.ensure_future(coro)
+                #self.loop.call_soon(self.set_music,"start",self.my_ip_addr,myport)
+                self.loop.call_soon(self.send_msg_noqueue,{ "method": "set_music", "params": [["stop","start"].index(action.lower()),self.my_ip_addr,myport] },callb)
+            elif action.lower() == "stop" and self.musicm:
+                self.music_mode_off()
+            else:
+                return False
             return True
         return False
 
@@ -930,7 +934,7 @@ class XiaomiBulb(object):
         return False
         """
         self.transports.append(conn)
-        #print("Registering connection {} for {}".format(conn,self.bulb_id))
+        print("Registering connection {} for {}".format(conn,self.bulb_id))
         if not self.registered:
             self.my_ip_addr = conn.transport.get_extra_info('sockname')[0]
             self.registered = True
@@ -940,7 +944,7 @@ class XiaomiBulb(object):
     def unregister(self,conn):
         """Proxy method to unregister the device with the parent.
         """
-        #print("Unregistering connection {} for {}".format(conn,self.bulb_id))
+        print("Unregistering connection {} for {}".format(conn,self.bulb_id))
         for x in range(len(self.transports)):
             if self.transports[x].id == conn.id:
                 del(self.transports[x])

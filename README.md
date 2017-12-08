@@ -102,7 +102,7 @@ Other things worth noting:
 
     - Xiaomi allows only about 1 command per second per connection. To counter that,
       one can start more than one connection to a bulb. There is a limit of
-      4 connections per bulb, but given that there can onlly be 144 command per minute
+      4 connections per bulb, but given that there can only be 144 command per minute
       per bulb, only 2 connections can be handled without starting to overload the bulb.
       Use .set_connection(x) before activate to set the number of connections
 
@@ -117,7 +117,7 @@ Other things worth noting:
                     head: queue them but discard the head of the queue
                     random: queue the message then discard a random element of the queue
                     adapt: switch to the so-called "music mode" and dump all the messages.
-                           after 5 secs inactivity, the "music mode" is cancelled
+                           After 5 secs inactivity, the "music mode" is cancelled
 
     - The socket connecting to a bulb is not closed unless the bulb is deemed to have
       gone the way of the Dodo.
