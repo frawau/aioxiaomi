@@ -75,12 +75,25 @@ class bulbs():
             #print("Activating bulb {} with id {}".format(newbulb,newbulb.bulb_id))
             self.pending_bulbs.append(newbulb)
             newbulb.set_connections(2) #Open 2 channels to the bulb
-            newbulb.set_queue_limit(15,"adapt")
+            newbulb.set_queue_limit(5,"adapt")
             newbulb.activate()
         else:
             del(newbulb)
 
 
+async def flood_weelight(light, count):
+    for x in range(0,count):
+        thiscol = randint(0,16777215)
+        light.set_rgb_direct(thiscol,light.brightness)
+        await aio.sleep(0.05)
+
+def start_music_result(cmd,data):
+    if "error" in data:
+        print("Music Mode could not {}".format(cmd))
+    elif "result" in data and data["result"]==["ok"]:
+        print("Music Mode was {}{}ed".format(cmd,cmd=="stop" and "p" or ""))
+    else:
+        print("Don't know what this response to {} is: {}".format(cmd,data))
 
 def readin():
     """Reading from stdin and displaying menu"""
@@ -150,12 +163,17 @@ def readin():
                 elif int(lov[0]) == 7:
                     #try:
                     count = int(lov[1])
-                    for x in range(0,count):
-                        thiscol = randint(0,16777215)
-                        MyBulbs.boi.set_rgb_direct(thiscol,MyBulbs.boi.brightness)
+                    aio.ensure_future(flood_weelight(MyBulbs.boi,count))
                     MyBulbs.boi=None
                     #except:
                         #print("Error: For Stress you must specify a count (Integer)\n")
+                elif int(lov[0]) == 8:
+                    cmd = str(lov[1]).lower()
+                    if cmd not in ["start","stop"]:
+                        print("Error: For \"music mode\" you must indicate \"start\" or \"stop\"\n")
+                    else:
+                        MyBulbs.boi.set_music(cmd,0,partial(start_music_result,cmd))
+                        MyBulbs.boi=None
 
             #except:
                 #print ("\nError: Selection must be a number.\n")
@@ -179,6 +197,7 @@ def readin():
         print("\t[5]\tSet Name (Bulb name)")
         print("\t[6]\tPulse (Red Green Blue)")
         print("\t[7]\tStress (Number of colour changes)")
+        print("\t[8]\tStart/Stop Music mode (start or stop)")
         print("")
         print("\t[0]\tBack to bulb selection")
     else:

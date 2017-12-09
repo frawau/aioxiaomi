@@ -124,6 +124,3 @@ Other things worth noting:
 
     - I only have "Color" model, so I could not test with other types
       of bulbs
-
-    - Unlike in lifxlan, set_waveform takes a dictionary with the right
-      keys instead of all those parameters
