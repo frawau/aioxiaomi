@@ -19,16 +19,14 @@ Essentially, you create an object with at least 2 methods:
     - register
     - unregister
 
-You then start the XiaomiDiscovery task in asyncio. It will register any new light it finds.
-All the method communicating with the bulb can be passed a callback function to react to
-the bulb response. The callback should take 2 parameters:
+You then start the XiaomiDiscovery task in asyncio with a callback that will create and .activate() any new bulb.
+Upon connection with the bulb, it will register itself with the parent. All the method communicating with the bulb
+can be passed a callback function to react to the bulb response. The callback should take 2 parameters:
 
     - a light object
     - the response message
 
-
-The easiest way is to look at the file in the examples directory. "Wifi" and "Uptime" use
-a callback to print the info when it is returned.
+Checkout __main__.py to see how it works.
 
 
 In essence, the test program is this
