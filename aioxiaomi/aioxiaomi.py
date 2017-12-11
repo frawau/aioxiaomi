@@ -267,64 +267,68 @@ class XiaomiBulb(object):
             :returns: a coroutine to be scheduled
             :rtype: coroutine
         """
-        if timeout_secs is None:
-            timeout_secs = DEFAULT_TIMEOUT
-        if max_attempts is None:
-            max_attempts = DEFAULT_ATTEMPTS
-        mydelta=dt.timedelta(seconds=1)
-        dodelay = len(self.transports)-1
-        while not self.message_queue.empty():
-            callb,msg = self.message_queue.get()
-            if self.musicm:
-                if isinstance(self.musicm,aio.Future):
-                    #print("Awaiting Future {}".format(self.musicm))
-                    try:
-                        x=await aio.wait_for(self.musicm,timeout=2)
-                        self.musicm = self.musicm.result()
-                    except:
-                        #Oops
-                        self.musicm = False
-                        #print("Future Failed")
-                        self.message_queue.trim(self.queue_limit)
-                        continue #We just drop the extra messages
-                    #print("Future gave {}".format(self.musicm))
-                self.musicm.write(json.dumps(msg))
-                if callb:
-                    callb({"id":msg["id"], "result":["ok"]})
-                if self.message_queue.empty():
-                    await aio.sleep(0.1)
-            else:
-                attempts = 0
-                while attempts < max_attempts:
-                    now = dt.datetime.now()
-                    cid = msg['id']
-                    event = aio.Event()
-                    self.pending_reply[cid]= [event, callb]
-                    attempts += 1
-                    myidx=self.tidx
-                    self.tidx = (self.tidx +1)%len(self.transports)
-                    diff = now - self.transports[myidx].last_sent
-                    if diff < mydelta:
-                        await aio.sleep((mydelta-diff).total_seconds())
-                    self.transports[myidx].write(json.dumps(msg))
-                    try:
-                        myresult = await aio.wait_for(event.wait(),timeout_secs)
-                        break
-                    except Exception as inst:
-                        if attempts >= max_attempts:
-                            if cid in self.pending_reply:
-                                callb =self.pending_reply[cid][1]
-                                if callb:
-                                    callb( None)
-                                del(self.pending_reply[cid])
-                            #It's dead Jim
-                            self.unregister(self.transports[myidx])
-                            if len(self.transports) == 0:
-                                self.is_sending = False
-                                return
-                if dodelay:
-                    dodelay -= 1
-                    await aio.sleep(1.0/len(self.transports))
+
+        try:
+            if timeout_secs is None:
+                timeout_secs = DEFAULT_TIMEOUT
+            if max_attempts is None:
+                max_attempts = len(self.transports) #So we can detect failure quickly
+            mydelta=dt.timedelta(seconds=1)
+            dodelay = len(self.transports)-1
+            while not self.message_queue.empty():
+                callb,msg = self.message_queue.get()
+                if self.musicm:
+                    if isinstance(self.musicm,aio.Future):
+                        #print("Awaiting Future {}".format(self.musicm))
+                        try:
+                            x=await aio.wait_for(self.musicm,timeout=2)
+                            self.musicm = self.musicm.result()
+                        except:
+                            #Oops
+                            self.musicm = False
+                            #print("Future Failed")
+                            self.message_queue.trim(self.queue_limit)
+                            continue #We just drop the extra messages
+                        #print("Future gave {}".format(self.musicm))
+                    self.musicm.write(json.dumps(msg))
+                    if callb:
+                        callb({"id":msg["id"], "result":["ok"]})
+                    if self.message_queue.empty():
+                        await aio.sleep(0.1)
+                else:
+                    attempts = 0
+                    while attempts < max_attempts:
+                        now = dt.datetime.now()
+                        cid = msg['id']
+                        event = aio.Event()
+                        self.pending_reply[cid]= [event, callb]
+                        attempts += 1
+                        myidx=self.tidx
+                        self.tidx = (self.tidx +1)%len(self.transports)
+                        diff = now - self.transports[myidx].last_sent
+                        if diff < mydelta:
+                            await aio.sleep((mydelta-diff).total_seconds())
+                        self.transports[myidx].write(json.dumps(msg))
+                        try:
+                            myresult = await aio.wait_for(event.wait(),timeout_secs)
+                            break
+                        except Exception as inst:
+                            if attempts >= max_attempts:
+                                if cid in self.pending_reply:
+                                    callb =self.pending_reply[cid][1]
+                                    if callb:
+                                        callb( None)
+                                    del(self.pending_reply[cid])
+                                #It's dead Jim
+                                self.unregister(self.transports[myidx])
+                                if len(self.transports) == 0:
+                                    self.is_sending = False
+                                    return
+                    if dodelay:
+                        dodelay -= 1
+                        await aio.sleep(1.0/len(self.transports))
+        except:
+            pass
         self.is_sending = False
 
     def send_msg_noqueue(self,msg, callb=None):
@@ -339,6 +343,7 @@ class XiaomiBulb(object):
     def send_msg(self,msg, callb=None, timeout_secs=None, max_attempts=None):
         """ Let's send
         """
+        #print("Sending {}".format(msg))
         if self.queue_limit == 0 or len(self.message_queue)< self.queue_limit:
             cid= self.seq_next()
             msg['id']=cid
@@ -425,8 +430,8 @@ class XiaomiBulb(object):
         :param props:  list of properties
         :type props: list
         """
-        #print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
-        if "result" in result:
+        ##print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
+        if result and  "result" in result:
             for prop,val in zip(request,result["result"]):
                 if prop in PROPERTIES:
                     if prop in INT_PROPERTIES:
@@ -974,12 +979,15 @@ class XiaomiBulb(object):
         #print("Unregistering connection {} for {}".format(conn,self.bulb_id))
         for x in range(len(self.transports)):
             if self.transports[x].id == conn.id:
+                try:
+                    self.transports[x].close()
+                except:
+                    pass
+
                 del(self.transports[x])
                 break
 
         if len(self.transports)==0 and self.registered:
-            #Only if we have not received any message recently.
-            #if datetime.datetime.now()-datetime.timedelta(seconds=self.unregister_timeout) > self.lastmsg:
             self.registered = False
             if self.parent:
                 self.parent.unregister(self)
@@ -1059,7 +1067,7 @@ class XiaomiBulb(object):
                 result[col] = val%256
                 val=int((val-result[col])/256)
 
-            return  int(self.properties["rgb"])
+            return  result
         else:
             return result
 
