@@ -37,7 +37,7 @@ PROPERTIES = ["power", "bg_power", "bright", "bg_bright", "nl_br", "ct", "bg_ct"
                "flowing", "bg_flowing", "flow_params", "bg_flow_params","music_on",
                "name", "delayoff",'fw_ver',"model","id"]
 
-INT_PROPERTIES= ['bright', "bg_bright", "nl_br", "ct", "bg_ct", "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat","delayoff"]
+INT_PROPERTIES= ['bright', "bg_bright", "nl_br", "ct", "bg_ct", "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat","delayoff", 'color_mode']
 HEX_PROPERTIES= ["id"]
 
 DEFAULT_TIMEOUT=0.5 # How long to wait for a response
@@ -48,7 +48,7 @@ class Mode(IntEnum):
     Default = 0
     RGB = 1
     White = 2
-    HSL = 3
+    HSV = 3
     Flow = 4
     Night = 5
     Sleep = 7
@@ -290,7 +290,7 @@ class XiaomiBulb(object):
                     #print("Future gave {}".format(self.musicm))
                 self.musicm.write(json.dumps(msg))
                 if callb:
-                    callb({"id":1, "result":["ok"]})
+                    callb({"id":msg["id"], "result":["ok"]})
                 if self.message_queue.empty():
                     await aio.sleep(0.1)
             else:
@@ -315,7 +315,7 @@ class XiaomiBulb(object):
                             if cid in self.pending_reply:
                                 callb =self.pending_reply[cid][1]
                                 if callb:
-                                    callb(self, None)
+                                    callb( None)
                                 del(self.pending_reply[cid])
                             #It's dead Jim
                             self.unregister(self.transports[myidx])
@@ -376,7 +376,7 @@ class XiaomiBulb(object):
                         callb(received_data)
                     del(self.pending_reply[cid])
 
-            elif 'method' in received_data:
+            if 'method' in received_data:
                 if received_data["method"] == "props":
                     for prop,val in received_data["params"].items():
                         if prop in PROPERTIES:
@@ -391,7 +391,7 @@ class XiaomiBulb(object):
     def register_callback(self,callb):
         """Method used to register a default call back to be called when data is received
 
-        The callback will be called with a dictionary of properties that have been changed.
+        The callback will be called with a yeelight response.
 
             :param callb: The calllback to be executed.
             :type callb: callable
@@ -425,11 +425,18 @@ class XiaomiBulb(object):
         :param props:  list of properties
         :type props: list
         """
-        for prop,val in zip(request,result):
-            if prop in PROPERTIES:
-                self.properties[prop]=val
-        if callb:
-            callb(result)
+        #print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
+        if "result" in result:
+            for prop,val in zip(request,result["result"]):
+                if prop in PROPERTIES:
+                    if prop in INT_PROPERTIES:
+                        self.properties[prop]=int(val)
+                    elif prop in HEX_PROPERTIES:
+                        self.properties[prop]=int(val,base=16)
+                    else:
+                        self.properties[prop]=val
+            if callb:
+                callb(result)
 
     def _cmd_reply(self,props,callb,result):
         """Generic command result.
@@ -445,7 +452,7 @@ class XiaomiBulb(object):
         """
         if "ok" in result:
             for p,v in props.items():
-                self.properties[p]
+                self.properties[p]=v
 
         if callb:
             callb(result)
@@ -518,7 +525,7 @@ class XiaomiBulb(object):
             return True
         return False
 
-    def set_bright(self, brightness, effect="sudden", duration="100",callb=None):
+    def set_brightness(self, brightness, effect="sudden", duration="100",callb=None):
 
         """Set brightness of light
 
@@ -536,7 +543,7 @@ class XiaomiBulb(object):
         if self.properties["power"] == "on" and "set_bright" in self.support:
             if effect == "smooth":
                 duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_bright", "params": [bright, effect,duration] }, callb)
+                self.send_msg({ "method": "set_bright", "params": [brightness, effect,duration] }, callb)
             return True
         return False
 
@@ -1029,26 +1036,32 @@ class XiaomiBulb(object):
         if "power" in self.properties:
             return  self.properties["power"]
         else:
-            return None
+            return "off"
 
     @property
     def colour(self):
-        result = {"hue":None, "saturation": None, "value":None}
+        result = {"hue":0, "saturation": 0, "brightness":0}
         if "sat" in self.properties:
             result['saturation']=self.properties["sat"]
         if "hue" in self.properties:
             result['hue']=self.properties["hue"]
         if "bright" in self.properties:
-            result['value']=self.properties["bright"]
+            result['brightness']=self.properties["bright"]
 
         return result
 
     @property
     def rgb(self):
+        result = {"red":0, "green": 0, "blue":0}
         if "rgb" in self.properties:
+            val=int(self.properties["rgb"])
+            for col in ["blue","green","red"]:
+                result[col] = val%256
+                val=int((val-result[col])/256)
+
             return  int(self.properties["rgb"])
         else:
-            return 0
+            return result
 
     @property
     def brightness(self):
@@ -1059,13 +1072,22 @@ class XiaomiBulb(object):
 
     @property
     def white(self):
-        result = {"brightness":None, "temperature": None}
+        result = {"brightness":0, "temperature": 0}
         if "ct" in self.properties:
             result['temperature']=self.properties["ct"]
         if "bright" in self.properties:
             result['brightness']=self.properties["bright"]
 
         return result
+
+    @property
+    def current_colour(self):
+        if self.properties['color_mode'] == Mode.RGB.value:
+            return self.rgb
+        elif self.properties['color_mode'] == Mode.HSV.value:
+            return self.colour
+        else:
+            return self.white
 
     @property
     def name(self):

@@ -28,6 +28,7 @@ class XiaomiUPnP(aio.Protocol):
         self.clients = {}
         self.broadcast_cnt=0
         self.future=future
+        self.discovery_timeout = _DISCOVERYTIMEOUT
 
     def connection_made(self, transport):
         self.transport = transport
@@ -38,7 +39,9 @@ class XiaomiUPnP(aio.Protocol):
         ttl = pack('@i', 1)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
 
-    def _broadcast(self):
+    def broadcast_once(self):
+        """Send the discovery mesage broadcast_once
+        """
         request = '\r\n'.join(("M-SEARCH * HTTP/1.1",
                                "HOST:{}:{}",
                                "ST:wifi_bulb",
@@ -59,7 +62,7 @@ class XiaomiUPnP(aio.Protocol):
                 pass
 
         if self.handler:
-            self.handler(self,address=addr,headers=headers)
+            self.handler(addr,headers)
 
 
     def error_received(self, name):
@@ -72,15 +75,16 @@ class XiaomiUPnP(aio.Protocol):
         pass
 
     def broadcast(self,seconds,timeout=_DISCOVERYTIMEOUT):
-        self.task= aio.get_event_loop().create_task(self._do_broadcast(seconds,timeout))
+        self.discovery_timeout = timeout
+        self.task= aio.get_event_loop().create_task(self._do_broadcast(seconds))
 
-    async def _do_broadcast(self,seconds,timeout):
+    async def _do_broadcast(self,seconds):
         count = seconds
         while True:
             if count == 0:
                 count = seconds
-                await aio.sleep(timeout)
-            self._broadcast()
+                await aio.sleep(self.discovery_timeout)
+            self.broadcast_once()
             count -= 1
             await aio.sleep(1)
 
@@ -100,7 +104,8 @@ def start_xiaomi_discovery(handler):
         lambda: XiaomiUPnP(loop,UPNP_ADDR,handler,future),
         sock=sock
     )
-    return connect
+    x=aio.ensure_future(connect)
+    return future
 
 def test():
     logging.basicConfig(level=logging.DEBUG)

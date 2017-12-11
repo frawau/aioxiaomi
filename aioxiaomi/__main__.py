@@ -58,8 +58,8 @@ class bulbs():
                 break
             idx+=1
 
-    def new_bulb(self, sender, **kwargs):
-        newbulb = aiox.XiaomiBulb(aio.get_event_loop(),kwargs['headers'],self)
+    def new_bulb(self, address, headers):
+        newbulb = aiox.XiaomiBulb(aio.get_event_loop(),headers,self)
         found = False
         for abulb in self.bulbs:
             if abulb.bulb_id == newbulb.bulb_id:
@@ -133,22 +133,33 @@ def readin():
                                     int(round(float(lov[3]))))
                             MyBulbs.boi=None
                         except:
-                            print("Error: For colour Hue (0-359), Saturation (0-100) and Value (0-100)) must be numbers.\n")
+                            print("Error: For colour Hue (0-359), Saturation (0-100) and Brightness (0-100)) must be numbers.\n")
                     else:
-                        print("Error: For colour you must indicate Hue (0-359), Saturation (0-100) and Value (0-100)\n")
+                        print("Error: For colour you must indicate Hue (0-359), Saturation (0-100) and Brightess (0-100)\n")
 
                 elif int(lov[0]) == 4:
+                    if len(lov) >4:
+                        #try:
+                        MyBulbs.boi.set_hsv(min(359,int(round(float(lov[2])))),
+                                            int(round(float(lov[3]))),"smooth",int(round(float(lov[1])*1000)))
+                        MyBulbs.boi.set_brightness(min(100,int(round(float(lov[4])))),"smooth",int(round(float(lov[1])*1000)))
+                        MyBulbs.boi=None
+                        #except:
+                            #print("Error: For Smooth colour Duration, Hue (0-359), Saturation (0-100) and Brightness (0-100)) must be numbers.\n")
+                    else:
+                        print("Error: For Smooth colour you must indicate Hue (0-359), Saturation (0-100) and Brightness (0-100)\n")
+                elif int(lov[0]) == 5:
                     for prop in MyBulbs.boi.properties:
                         print("\t{}:\t{}".format(prop.title(),MyBulbs.boi.properties[prop]))
                     print("\tMessage Queue:\t{}".format(len(MyBulbs.boi.message_queue)))
                     MyBulbs.boi=None
-                elif int(lov[0]) == 5:
+                elif int(lov[0]) == 6:
                     try:
                         MyBulbs.boi.set_name(" ".join(lov[1:]))
                         MyBulbs.boi=None
                     except:
                         print("Error: Could not set name\n")
-                elif int(lov[0]) == 6:
+                elif int(lov[0]) == 7:
                     if len(lov) >3:
                         #try:
                         MyBulbs.boi.start_flow(10,"start",
@@ -160,14 +171,14 @@ def readin():
                             #print("Error: For pulse Red (0-255), Green (0-255) and Blue (0-255) must be numbers.\n")
                     else:
                         print("Error: For pulse you must indicate Red (0-255), Green (0-255) and Blue (0-255)\n")
-                elif int(lov[0]) == 7:
+                elif int(lov[0]) == 8:
                     #try:
                     count = int(lov[1])
                     aio.ensure_future(flood_weelight(MyBulbs.boi,count))
                     MyBulbs.boi=None
                     #except:
                         #print("Error: For Stress you must specify a count (Integer)\n")
-                elif int(lov[0]) == 8:
+                elif int(lov[0]) == 9:
                     cmd = str(lov[1]).lower()
                     if cmd not in ["start","stop"]:
                         print("Error: For \"music mode\" you must indicate \"start\" or \"stop\"\n")
@@ -192,12 +203,13 @@ def readin():
         print("Select Function for {}:".format(MyBulbs.boi.name))
         print("\t[1]\tPower (on or off)")
         print("\t[2]\tWhite (Brigthness Temperature)")
-        print("\t[3]\tColour (Hue Saturation Value)")
-        print("\t[4]\tInfo")
-        print("\t[5]\tSet Name (Bulb name)")
-        print("\t[6]\tPulse (Red Green Blue)")
-        print("\t[7]\tStress (Number of colour changes)")
-        print("\t[8]\tStart/Stop Music mode (start or stop)")
+        print("\t[3]\tColour (Hue Saturation Brightness)")
+        print("\t[4]\tSlow Colour Change (Duration Hue Saturation Brightness)")
+        print("\t[5]\tInfo")
+        print("\t[6]\tSet Name (Bulb name)")
+        print("\t[7]\tPulse (Red Green Blue)")
+        print("\t[8]\tStress (Number of colour changes)")
+        print("\t[9]\tStart/Stop Music mode (start or stop)")
         print("")
         print("\t[0]\tBack to bulb selection")
     else:
@@ -223,11 +235,10 @@ except Exception as e:
 
 MyBulbs= bulbs()
 loop = aio.get_event_loop()
-coro = aiox.start_xiaomi_discovery(MyBulbs.new_bulb)
-transp, server = loop.run_until_complete(coro)
+myfuture = aiox.start_xiaomi_discovery(MyBulbs.new_bulb)
+myfuture.add_done_callback(lambda f: f.result().broadcast(2))
 try:
     loop.add_reader(sys.stdin,readin)
-    server.broadcast(2)
     print("Hit \"Enter\" to start")
     print("Use Ctrl-C to quit")
     loop.run_forever()
@@ -235,7 +246,7 @@ except:
     pass
 finally:
     print("Exiting at user's request.")
-    server.close()
+    myfuture.result().close()
     loop.remove_reader(sys.stdin)
     loop.run_until_complete(aio.sleep(2))
     loop.close()
