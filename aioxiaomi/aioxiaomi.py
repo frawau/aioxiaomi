@@ -430,8 +430,8 @@ class XiaomiBulb(object):
         :param props:  list of properties
         :type props: list
         """
-        ##print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
-        if result and  "result" in result:
+        #print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
+        if result and  "result" in result and ("music_on" not in self.properties or self.properties["music_on"] != 1):
             for prop,val in zip(request,result["result"]):
                 if prop in PROPERTIES:
                     if prop in INT_PROPERTIES:
