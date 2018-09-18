@@ -40,7 +40,7 @@ PROPERTIES = ["power", "bg_power", "bright", "bg_bright", "nl_br", "ct", "bg_ct"
 INT_PROPERTIES= ['bright', "bg_bright", "nl_br", "ct", "bg_ct", "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat","delayoff", 'color_mode']
 HEX_PROPERTIES= ["id"]
 
-DEFAULT_TIMEOUT=0.5 # How long to wait for a response
+DEFAULT_TIMEOUT=1.0 # How long to wait for a response
 DEFAULT_ATTEMPTS=1 # How many times to try
 MESSAGE_WINDOW = 256
 
@@ -1023,7 +1023,9 @@ class XiaomiBulb(object):
                     adapt: switch to "music" mode and send
         """
         self.queue_limit = length
-        self.queue_policy = policy
+        if policy != "adapt" or "set_music" in self.support:
+            #Silently ignoring unsupported policy
+            self.queue_policy = policy
 
     def music_mode_off(self):
         if self.musicm:

@@ -110,28 +110,28 @@ def start_xiaomi_discovery(handler):
 def test():
     logging.basicConfig(level=logging.DEBUG)
     broadcaster = {}
-    def handler(sender, **kwargs):
+    def handler(sender, args):
         print("I GOT ONE")
-        print(kwargs['address'], kwargs['headers'])
+        print(sender[0], args)
 
 
     loop = aio.get_event_loop()
     connect = start_xiaomi_discovery(handler)
     broadcaster[UPNP_ADDR] = loop.run_until_complete(connect)
-    broadcaster[UPNP_ADDR][1].broadcast(2)
+    print("{}".format(broadcaster))
+    broadcaster[UPNP_ADDR].broadcast(2)
     try:
         loop.run_forever()
     except KeyboardInterrupt:
         print("\n", "Exiting at user's request")
     finally:
         # Close the server
-        for transport, protocol in broadcaster.values():
+        for protocol in broadcaster.values():
             try:
                 if protocol.task:
                     protocol.task.cancel()
             except:
                 pass
-            transport.close()
         loop.close()
 
 
