@@ -31,18 +31,57 @@ from uuid import uuid4
 import datetime as dt
 from random import randint
 import socket
+import logging
 
-PROPERTIES = ["power", "bg_power", "bright", "bg_bright", "nl_br", "ct", "bg_ct",
-               "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat", "color_mode","bg_lmode",
-               "flowing", "bg_flowing", "flow_params", "bg_flow_params","music_on",
-               "name", "delayoff",'fw_ver',"model","id"]
+PROPERTIES = [
+    "power",
+    "bg_power",
+    "bright",
+    "bg_bright",
+    "nl_br",
+    "ct",
+    "bg_ct",
+    "rgb",
+    "bg_rgb",
+    "hue",
+    "bg_hue",
+    "sat",
+    "bg_sat",
+    "color_mode",
+    "bg_lmode",
+    "flowing",
+    "bg_flowing",
+    "flow_params",
+    "bg_flow_params",
+    "music_on",
+    "name",
+    "delayoff",
+    "fw_ver",
+    "model",
+    "id",
+]
 
-INT_PROPERTIES= ['bright', "bg_bright", "nl_br", "ct", "bg_ct", "rgb", "bg_rgb", "hue", "bg_hue", "sat", "bg_sat","delayoff", 'color_mode']
-HEX_PROPERTIES= ["id"]
+INT_PROPERTIES = [
+    "bright",
+    "bg_bright",
+    "nl_br",
+    "ct",
+    "bg_ct",
+    "rgb",
+    "bg_rgb",
+    "hue",
+    "bg_hue",
+    "sat",
+    "bg_sat",
+    "delayoff",
+    "color_mode",
+]
+HEX_PROPERTIES = ["id"]
 
-DEFAULT_TIMEOUT=1.0 # How long to wait for a response
-DEFAULT_ATTEMPTS=1 # How many times to try
+DEFAULT_TIMEOUT = 1.0  # How long to wait for a response
+DEFAULT_ATTEMPTS = 1  # How many times to try
 MESSAGE_WINDOW = 256
+
 
 class Mode(IntEnum):
     Default = 0
@@ -58,33 +97,34 @@ class Queue(object):
     """A simple queue implementation. Very basic
 
     """
+
     def __init__(self):
-        self.queue=[]
+        self.queue = []
 
     def get(self):
         try:
             v = self.queue[0]
-            self.queue= self.queue[1:]
+            self.queue = self.queue[1:]
             return v
         except:
             return None
 
-    def put(self,x):
+    def put(self, x):
         self.queue.append(x)
 
-    def retrieve(self,idx):
+    def retrieve(self, idx):
         if idx < len(self.queue):
             v = self.queue[idx]
-            self.queue = self.queue[:idx]+self.queue[idx+1:]
+            self.queue = self.queue[:idx] + self.queue[idx + 1 :]
             return v
         else:
             return None
 
     def empty(self):
-        return len(self.queue)==0
+        return len(self.queue) == 0
 
-    def trim(self,length):
-        self.queue = self.queue[0-length:]
+    def trim(self, length):
+        self.queue = self.queue[0 - length :]
 
     def __len__(self):
         return len(self.queue)
@@ -102,13 +142,14 @@ class XiaomiMusicConnect(aio.Protocol):
         :type autoclose: float
     """
 
-    def __init__(self, parent, future,autoclose=0):
+    def __init__(self, parent, future, autoclose=0):
         self.parent = parent
         self.future = future
         self.autoclose = autoclose
         self.transport = None
         self.last_sent = dt.datetime.now()
-        #print("Music Mode Server Created")
+        # print("Music Mode Server Created")
+
     #
     # Protocol Methods
     #
@@ -117,7 +158,8 @@ class XiaomiMusicConnect(aio.Protocol):
         """Method run when the connection to the lamp is established
         """
 
-        #print("Got connection from {}".format(transport.get_extra_info('peername')))
+        # print("Got connection from {}".format(transport.get_extra_info('peername')))
+        logging.debug(f"Connected to Yeelight via {transport}")
         self.transport = transport
         self.future.set_result(self)
         if self.autoclose:
@@ -126,26 +168,29 @@ class XiaomiMusicConnect(aio.Protocol):
     def connection_lost(self, error):
         self.parent.music_mode_off()
 
-    def data_received(self,data):
-        #self.parent.data_received(data)
-        #print("MUSIC Received {}".format(data)) #Are we supposed to receive something?
+    def data_received(self, data):
+        # self.parent.data_received(data)
+        # print("MUSIC Received {}".format(data)) #Are we supposed to receive something?
         pass
 
-    def write(self,msg):
-        #print("Music Sending {}".format(msg))
+    def write(self, msg):
+        # print("Music Sending {}".format(msg))
         self.last_sent = dt.datetime.now()
-        self.transport.write((msg+"\r\n").encode())
+        self.transport.write((msg + "\r\n").encode())
 
     def close(self):
         self.transport.close()
 
     async def _autoclose_me(self):
         while True:
-            if dt.datetime.now()-self.last_sent > dt.timedelta(seconds=self.autoclose):
-                #print("Time to cleanup")
+            if dt.datetime.now() - self.last_sent > dt.timedelta(
+                seconds=self.autoclose
+            ):
+                # print("Time to cleanup")
                 self.close()
                 return
             await aio.sleep(1)
+
 
 class XiaomiConnect(aio.Protocol):
     """ This class is a single unicast connection to a Xiaomi device
@@ -159,6 +204,7 @@ class XiaomiConnect(aio.Protocol):
         self.id = uuid4()
         self.last_sent = dt.datetime.now() - dt.timedelta(seconds=2)
         self.ip_addr = ""
+
     #
     # Protocol Methods
     #
@@ -173,13 +219,14 @@ class XiaomiConnect(aio.Protocol):
         if self.parent:
             self.parent.unregister(self)
 
-    def data_received(self,data):
+    def data_received(self, data):
         self.parent.data_received(data)
 
-    def write(self,msg):
-        #print("Sending {}".format(msg))
+    def write(self, msg):
+        # print("Sending {}".format(msg))
         self.last_sent = dt.datetime.now()
-        self.transport.write((msg+"\r\n").encode())
+        logging.debug(f"Sending {msg}")
+        self.transport.write((msg + "\r\n").encode())
 
     def close(self):
         self.transport.close()
@@ -203,7 +250,6 @@ class XiaomiBulb(object):
 
      """
 
-
     def __init__(self, loop, headers, parent=None, tnb=1):
         self.loop = loop
         self.parent = parent
@@ -212,17 +258,17 @@ class XiaomiBulb(object):
         for key in headers:
             if key in PROPERTIES:
                 if key in INT_PROPERTIES:
-                    self.properties[key]=int(headers[key])
+                    self.properties[key] = int(headers[key])
                 elif key in HEX_PROPERTIES:
-                    self.properties[key]=int(headers[key],base=16)
+                    self.properties[key] = int(headers[key], base=16)
                 else:
-                    self.properties[key]=headers[key]
+                    self.properties[key] = headers[key]
         self.ip_address = headers["location"].split("://")[1].split(":")[0]
         self.port = headers["location"].split("://")[1].split(":")[1]
         self.seq = 0
         # Key is the message sequence, value is a callable
         self.pending_reply = {}
-        self.tnb = max(1,min(4,tnb)) #Minimum 1, max 4 per Xiaomi specs
+        self.tnb = max(1, min(4, tnb))  # Minimum 1, max 4 per Xiaomi specs
         self.transports = []
         self.tidx = 0
         self.musicm = False
@@ -230,18 +276,18 @@ class XiaomiBulb(object):
         self.default_attempts = DEFAULT_ATTEMPTS
         self.default_callb = lambda x: None
         self.registered = False
-        self.message_queue=Queue()
-        self.queue_limit = 0 #No limit
-        self.queue_policy = "drop" #What to do when limit is reached
+        self.message_queue = Queue()
+        self.queue_limit = 0  # No limit
+        self.queue_policy = "drop"  # What to do when limit is reached
         self.is_sending = False
         self.my_ip_addr = ""
 
     def activate(self):
-        #Start the transports
+        # Start the transports
         for x in range(self.tnb):
             listen = self.loop.create_connection(
-                    partial(XiaomiConnect,self),
-                        self.ip_address,self.port)
+                partial(XiaomiConnect, self), self.ip_address, self.port
+            )
             xx = aio.ensure_future(listen)
 
     def seq_next(self):
@@ -250,10 +296,10 @@ class XiaomiBulb(object):
             :returns: next number in sequensce (modulo 128)
             :rtype: int
         """
-        self.seq = ( self.seq + 1 ) % MESSAGE_WINDOW
+        self.seq = (self.seq + 1) % MESSAGE_WINDOW
         return self.seq
 
-    async def try_sending(self,timeout_secs=None, max_attempts=None):
+    async def try_sending(self, timeout_secs=None, max_attempts=None):
         """Coroutine used to send message to the device when a response is needed.
 
         This coroutine will try to send up to max_attempts time the message, waiting timeout_secs
@@ -272,128 +318,128 @@ class XiaomiBulb(object):
             if timeout_secs is None:
                 timeout_secs = DEFAULT_TIMEOUT
             if max_attempts is None:
-                max_attempts = len(self.transports) #So we can detect failure quickly
-            mydelta=dt.timedelta(seconds=1)
-            dodelay = len(self.transports)-1
+                max_attempts = len(self.transports)  # So we can detect failure quickly
+            mydelta = dt.timedelta(seconds=1)
+            dodelay = len(self.transports) - 1
             while not self.message_queue.empty():
-                callb,msg = self.message_queue.get()
+                callb, msg = self.message_queue.get()
                 if self.musicm:
-                    if isinstance(self.musicm,aio.Future):
-                        #print("Awaiting Future {}".format(self.musicm))
+                    if isinstance(self.musicm, aio.Future):
+                        # print("Awaiting Future {}".format(self.musicm))
                         try:
-                            x=await aio.wait_for(self.musicm,timeout=2)
+                            x = await aio.wait_for(self.musicm, timeout=2)
                             self.musicm = self.musicm.result()
                         except:
-                            #Oops
+                            # Oops
                             self.musicm = False
-                            #print("Future Failed")
+                            # print("Future Failed")
                             self.message_queue.trim(self.queue_limit)
-                            continue #We just drop the extra messages
-                        #print("Future gave {}".format(self.musicm))
+                            continue  # We just drop the extra messages
+                        # print("Future gave {}".format(self.musicm))
                     self.musicm.write(json.dumps(msg))
                     if callb:
-                        callb({"id":msg["id"], "result":["ok"]})
+                        callb({"id": msg["id"], "result": ["ok"]})
                     if self.message_queue.empty():
                         await aio.sleep(0.1)
                 else:
                     attempts = 0
                     while attempts < max_attempts:
                         now = dt.datetime.now()
-                        cid = msg['id']
+                        cid = msg["id"]
                         event = aio.Event()
-                        self.pending_reply[cid]= [event, callb]
+                        self.pending_reply[cid] = [event, callb]
                         attempts += 1
-                        myidx=self.tidx
-                        self.tidx = (self.tidx +1)%len(self.transports)
+                        myidx = self.tidx
+                        self.tidx = (self.tidx + 1) % len(self.transports)
                         diff = now - self.transports[myidx].last_sent
                         if diff < mydelta:
-                            await aio.sleep((mydelta-diff).total_seconds())
+                            await aio.sleep((mydelta - diff).total_seconds())
                         self.transports[myidx].write(json.dumps(msg))
                         try:
-                            myresult = await aio.wait_for(event.wait(),timeout_secs)
+                            myresult = await aio.wait_for(event.wait(), timeout_secs)
                             break
                         except Exception as inst:
                             if attempts >= max_attempts:
                                 if cid in self.pending_reply:
-                                    callb =self.pending_reply[cid][1]
+                                    callb = self.pending_reply[cid][1]
                                     if callb:
-                                        callb( None)
-                                    del(self.pending_reply[cid])
-                                #It's dead Jim
+                                        callb(None)
+                                    del self.pending_reply[cid]
+                                # It's dead Jim
                                 self.unregister(self.transports[myidx])
                                 if len(self.transports) == 0:
                                     self.is_sending = False
                                     return
                     if dodelay:
                         dodelay -= 1
-                        await aio.sleep(1.0/len(self.transports))
+                        await aio.sleep(1.0 / len(self.transports))
         except:
             pass
         self.is_sending = False
 
-    def send_msg_noqueue(self,msg, callb=None):
+    def send_msg_noqueue(self, msg, callb=None):
         """Sending a message by-passing the queue
         """
-        cid= self.seq_next()
-        msg['id']=cid
+        cid = self.seq_next()
+        msg["id"] = cid
         if callb:
-            self.pending_reply[cid]= [None, callb]
+            self.pending_reply[cid] = [None, callb]
         self.transports[0].write(json.dumps(msg))
 
-    def send_msg(self,msg, callb=None, timeout_secs=None, max_attempts=None):
+    def send_msg(self, msg, callb=None, timeout_secs=None, max_attempts=None):
         """ Let's send
         """
-        #print("Sending {}".format(msg))
-        if self.queue_limit == 0 or len(self.message_queue)< self.queue_limit:
-            cid= self.seq_next()
-            msg['id']=cid
-            self.message_queue.put((callb,msg))
+        # print("Sending {}".format(msg))
+        if self.queue_limit == 0 or len(self.message_queue) < self.queue_limit:
+            cid = self.seq_next()
+            msg["id"] = cid
+            self.message_queue.put((callb, msg))
             if not self.is_sending:
                 self.is_sending = True
-                xxx=self.loop.create_task(self.try_sending(timeout_secs, max_attempts))
+                xxx = self.loop.create_task(
+                    self.try_sending(timeout_secs, max_attempts)
+                )
         elif self.queue_limit > 0:
             if self.queue_policy != "drop":
-                cid= self.seq_next()
-                msg['id']=cid
-                self.message_queue.put((callb,msg))
+                cid = self.seq_next()
+                msg["id"] = cid
+                self.message_queue.put((callb, msg))
                 if self.queue_policy == "head":
-                    x=self.message_queue.get()
-                    del(x)
+                    x = self.message_queue.get()
+                    del x
                 elif self.queue_policy == "adapt":
-                    self.set_music("start",5)
-                else :#self.queue_policy == "random":
-                    idx = randint(0,len(self.message_queue)-1)
-                    x=self.message_queue.retrieve(idx)
-                    del(x)
+                    self.set_music("start", 5)
+                else:  # self.queue_policy == "random":
+                    idx = randint(0, len(self.message_queue) - 1)
+                    x = self.message_queue.retrieve(idx)
+                    del x
 
-    def data_received(self,data):
-        #Do something
+    def data_received(self, data):
+        # Do something
         try:
-            #print("Received raw data: {}".format(data))
+            # print("Received raw data: {}".format(data))
             received_data = json.loads(data)
             if "id" in received_data:
-                cid = int(received_data['id'])
+                cid = int(received_data["id"])
                 if cid in self.pending_reply:
-                    myevent,callb = self.pending_reply[cid]
+                    myevent, callb = self.pending_reply[cid]
                     if myevent:
                         myevent.set()
                     if callb:
                         callb(received_data)
-                    del(self.pending_reply[cid])
+                    del self.pending_reply[cid]
 
-            if 'method' in received_data:
+            if "method" in received_data:
                 if received_data["method"] == "props":
-                    for prop,val in received_data["params"].items():
+                    for prop, val in received_data["params"].items():
                         if prop in PROPERTIES:
-                            self.properties[prop]=val
+                            self.properties[prop] = val
 
                 self.default_callb(received_data["params"])
         except:
             pass
 
-
-
-    def register_callback(self,callb):
+    def register_callback(self, callb):
         """Method used to register a default call back to be called when data is received
 
         The callback will be called with a yeelight response.
@@ -419,10 +465,12 @@ class XiaomiBulb(object):
             :rtype: bool
         """
         if "get_prop" in self.support:
-            self.send_msg({"method":"get_prop","params":props},partial(self._get_prop_reply,props,callb))
+            self.send_msg(
+                {"method": "get_prop", "params": props},
+                partial(self._get_prop_reply, props, callb),
+            )
             return True
         return False
-
 
     def _get_prop_reply(self, request, callb, result):
         """Get current values of light properties
@@ -430,20 +478,24 @@ class XiaomiBulb(object):
         :param props:  list of properties
         :type props: list
         """
-        #print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
-        if result and  "result" in result and ("music_on" not in self.properties or self.properties["music_on"] != 1):
-            for prop,val in zip(request,result["result"]):
+        # print("\n\nXIAOMI For {} got {}\n\n".format(request,result))
+        if (
+            result
+            and "result" in result
+            and ("music_on" not in self.properties or self.properties["music_on"] != 1)
+        ):
+            for prop, val in zip(request, result["result"]):
                 if prop in PROPERTIES:
                     if prop in INT_PROPERTIES:
-                        self.properties[prop]=int(val)
+                        self.properties[prop] = int(val)
                     elif prop in HEX_PROPERTIES:
-                        self.properties[prop]=int(val,base=16)
+                        self.properties[prop] = int(val, base=16)
                     else:
-                        self.properties[prop]=val
+                        self.properties[prop] = val
             if callb:
                 callb(result)
 
-    def _cmd_reply(self,props,callb,result):
+    def _cmd_reply(self, props, callb, result):
         """Generic command result.
 
             :param props: A dictionary of properties affected by the command with
@@ -456,13 +508,13 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "ok" in result:
-            for p,v in props.items():
-                self.properties[p]=v
+            for p, v in props.items():
+                self.properties[p] = v
 
         if callb:
             callb(result)
 
-    def set_temperature(self, temp, effect="sudden", duration="100",callb=None):
+    def set_temperature(self, temp, effect="sudden", duration=100, callb=None):
         """Set temperature of light
 
             :param temp:  Temperature in K (1700 - 6500 K)
@@ -478,12 +530,14 @@ class XiaomiBulb(object):
         """
         if self.properties["power"] == "on" and "set_ct_abx" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_ct_abx", "params": [temp, effect,duration]},callb)
+                duration = max(30, duration)  # Min is 30 msecs
+            self.send_msg(
+                {"method": "set_ct_abx", "params": [temp, effect, duration]}, callb
+            )
             return True
         return False
 
-    def set_rgb(self, rgb, effect="sudden", duration="100",callb=None):
+    def set_rgb(self, rgb, effect="sudden", duration=100, callb=None):
 
         """Set colour of light
 
@@ -499,14 +553,16 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if self.properties["power"] == "on" and "set_rgb" in self.support:
-            cid= self.seq_next()
+            cid = self.seq_next()
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_rgb", "params": [rgb, effect,duration]}, callb)
+                duration = max(30, duration)  # Min is 30 msecs
+            self.send_msg(
+                {"method": "set_rgb", "params": [rgb, effect, duration]}, callb
+            )
             return True
         return False
 
-    def set_hsv(self, hue, sat, effect="sudden", duration="100",callb=None):
+    def set_hsv(self, hue, sat, effect="sudden", duration=100, callb=None):
 
         """Set colour of light
 
@@ -525,12 +581,14 @@ class XiaomiBulb(object):
         """
         if self.properties["power"] == "on" and "set_hsv" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_hsv", "params": [hue, sat, effect,duration] }, callb)
+                duration = max(30, duration)  # Min is 30 msecs
+            self.send_msg(
+                {"method": "set_hsv", "params": [hue, sat, effect, duration]}, callb
+            )
             return True
         return False
 
-    def set_brightness(self, brightness, effect="sudden", duration="100",callb=None):
+    def set_brightness(self, brightness, effect="sudden", duration=100, callb=None):
 
         """Set brightness of light
 
@@ -547,18 +605,21 @@ class XiaomiBulb(object):
         """
         if self.properties["power"] == "on" and "set_bright" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-                self.send_msg({ "method": "set_bright", "params": [brightness, effect,duration] }, callb)
+                duration = max(30, duration)  # Min is 30 msecs
+                self.send_msg(
+                    {"method": "set_bright", "params": [brightness, effect, duration]},
+                    callb,
+                )
             return True
         return False
 
-    def set_power(self, power, effect="sudden", duration="100",mode=None,callb=None):
+    def set_power(self, power, effect="sudden", duration=100, mode=None, callb=None):
 
         """Set power of light
 
             :param power:  Power mode ("on" or "off")
             :type power: str
-            :param effect: One of "smooth" or "suddent"
+            :param effect: One of "smooth" or "sudden"
             :type effect: str
             :param duration: "smooth" effect duration in millisecs
             :type duration: int
@@ -571,16 +632,20 @@ class XiaomiBulb(object):
         """
         if "set_power" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
+                duration = max(30, duration)  # Min is 30 msecs
             if mode:
-                self.send_msg({ "method": "set_power", "params": [power, effect,duration,mode] },callb)
+                self.send_msg(
+                    {"method": "set_power", "params": [power, effect, duration, mode]},
+                    callb,
+                )
             else:
-                self.send_msg({ "method": "set_power", "params": [power, effect,duration] },callb)
+                self.send_msg(
+                    {"method": "set_power", "params": [power, effect, duration]}, callb
+                )
             return True
         return False
 
-
-    def set_default (self,callb=None):
+    def set_default(self, callb=None):
 
         """Save current state as default
 
@@ -590,11 +655,11 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_default" in self.support:
-            self.send_msg({ "method": "set_default", "params": []},callb)
+            self.send_msg({"method": "set_default", "params": []}, callb)
             return True
         return False
 
-    def bg_set_temperature(self, temp, effect="sudden", duration="100",callb=None):
+    def bg_set_temperature(self, temp, effect="sudden", duration=100, callb=None):
         """Set temperature of light
 
             :param temp:  Temperature in K (1700 - 6500 K)
@@ -610,12 +675,14 @@ class XiaomiBulb(object):
         """
         if self.properties["power"] == "on" and "bg_set_ct_abx" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "bg_set_ct_abx", "params": [temp, effect,duration]},callb)
+                duration = max(30, duration)  # Min is 30 msecs
+            self.send_msg(
+                {"method": "bg_set_ct_abx", "params": [temp, effect, duration]}, callb
+            )
             return True
         return False
 
-    def bg_set_rgb(self, rgb, effect="sudden", duration="100",callb=None):
+    def bg_set_rgb(self, rgb, effect="sudden", duration=100, callb=None):
 
         """Set colour of light
 
@@ -632,12 +699,14 @@ class XiaomiBulb(object):
         """
         if self.properties["power"] == "on" and "bg_set_rgb" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "set_rgb", "params": [rgb, effect,duration] },callb)
+                duration = max(30, duration)  # Min is 30 msecs
+            self.send_msg(
+                {"method": "set_rgb", "params": [rgb, effect, duration]}, callb
+            )
             return True
         return False
 
-    def bg_set_hsv(self, hue, sat, effect="sudden", duration="100",callb=None):
+    def bg_set_hsv(self, hue, sat, effect="sudden", duration=100, callb=None):
 
         """Set colour of light
 
@@ -656,13 +725,14 @@ class XiaomiBulb(object):
         """
         if self.properties["power"] == "on" and "bg_set_hsv" in self.support:
             if effect == "smooth":
-                duration = max(30,duration) #Min is 30 msecs
-            self.send_msg({ "method": "bg_set_hsv", "params": [hue, sat, effect,duration] },callb)
+                duration = max(30, duration)  # Min is 30 msecs
+            self.send_msg(
+                {"method": "bg_set_hsv", "params": [hue, sat, effect, duration]}, callb
+            )
             return True
         return False
 
-
-    def toggle (self,callb=None):
+    def toggle(self, callb=None):
 
         """Toggle power of light
 
@@ -672,11 +742,11 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "toggle" in self.support:
-            self.send_msg({ "method": "toggle", "params": []},callb)
+            self.send_msg({"method": "toggle", "params": []}, callb)
             return True
         return False
 
-    def bg_toggle (self,callb=None):
+    def bg_toggle(self, callb=None):
 
         """Toggle power of bg light
 
@@ -686,11 +756,11 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "bg_toggle" in self.support:
-            self.send_msg({ "method": "bg_toggle", "params": []},callb)
+            self.send_msg({"method": "bg_toggle", "params": []}, callb)
             return True
         return False
 
-    def dev_toggle (self,callb=None):
+    def dev_toggle(self, callb=None):
 
         """Toggle power of light and bg light
 
@@ -700,11 +770,11 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "bg_toggle" in self.support:
-            self.send_msg({ "method": "bg_toggle", "params": []},callb)
+            self.send_msg({"method": "bg_toggle", "params": []}, callb)
             return True
         return False
 
-    def start_flow(self,count, endstate, flex, callb=None):
+    def start_flow(self, count, endstate, flex, callb=None):
 
         """Set colour flow of light
 
@@ -728,12 +798,21 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if self.properties["power"] == "on" and "start_cf" in self.support:
-            self.send_msg({ "method": "start_cf", "params": [count, ["start","stop","off"].index(endstate.lower()),",".join(map(str,flex))] },callb)
+            self.send_msg(
+                {
+                    "method": "start_cf",
+                    "params": [
+                        count,
+                        ["start", "stop", "off"].index(endstate.lower()),
+                        ",".join(map(str, flex)),
+                    ],
+                },
+                callb,
+            )
             return True
         return False
 
-
-    def stop_flow(self,callb=None):
+    def stop_flow(self, callb=None):
 
         """Stop a flow running on the light
 
@@ -743,10 +822,9 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "stop_cf" in self.support:
-            self.send_msg({ "method": "stop_cf", "params": []},callb)
+            self.send_msg({"method": "stop_cf", "params": []}, callb)
             return True
         return False
-
 
     def set_rgb_direct(self, rgb, brightness, callb=None):
 
@@ -760,7 +838,9 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "params": ["color", rgb, brightness] }, callb)
+            self.send_msg(
+                {"method": "set_scene", "params": ["color", rgb, brightness]}, callb
+            )
             return True
         return False
 
@@ -779,11 +859,13 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "params": ["hsv", hue, sat, brightness] },callb)
+            self.send_msg(
+                {"method": "set_scene", "params": ["hsv", hue, sat, brightness]}, callb
+            )
             return True
         return False
 
-    def set_white_direct(self, temperature, brightness,callb=None):
+    def set_white_direct(self, temperature, brightness, callb=None):
 
         """Set temperature and brightness of light
 
@@ -797,11 +879,14 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "params": ["ct", temperature, brightness] },callb)
+            self.send_msg(
+                {"method": "set_scene", "params": ["ct", temperature, brightness]},
+                callb,
+            )
             return True
         return False
 
-    def set_flow_direct(self, count, endstate, flex,callb=None):
+    def set_flow_direct(self, count, endstate, flex, callb=None):
         """Set colour flow of light
 
             :param count: How many times is the flex to be ran. 0 means forever.
@@ -825,7 +910,18 @@ class XiaomiBulb(object):
         """
 
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "params": ["cf", count, ["start","stop","off"].index(endstate.lower()),flex] },callb)
+            self.send_msg(
+                {
+                    "method": "set_scene",
+                    "params": [
+                        "cf",
+                        count,
+                        ["start", "stop", "off"].index(endstate.lower()),
+                        flex,
+                    ],
+                },
+                callb,
+            )
             return True
         return False
 
@@ -843,11 +939,17 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set_scene" in self.support:
-            self.send_msg({ "method": "set_scene", "params": ["auto_delay_off", brightness, delay] },callb)
+            self.send_msg(
+                {
+                    "method": "set_scene",
+                    "params": ["auto_delay_off", brightness, delay],
+                },
+                callb,
+            )
             return True
         return False
 
-    def cron_add(self,action,delay, callb=None):
+    def cron_add(self, action, delay, callb=None):
 
         """Set an action with a delay
 
@@ -861,11 +963,17 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if self.properties["power"] == "on" and "cron_add" in self.support:
-            self.send_msg({ "method": "cron_add", "params": [["off","on"].index(action.lower()),delay] },callb)
+            self.send_msg(
+                {
+                    "method": "cron_add",
+                    "params": [["off", "on"].index(action.lower()), delay],
+                },
+                callb,
+            )
             return True
         return False
 
-    def cron_del(self,action, callb=None):
+    def cron_del(self, action, callb=None):
 
         """Cancel a timed action
 
@@ -877,11 +985,14 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if self.properties["power"] == "on" and "cron_del" in self.support:
-            self.send_msg({ "method": "cron_del", "params": [["off","on"].index(action.lower())] },callb)
+            self.send_msg(
+                {"method": "cron_del", "params": [["off", "on"].index(action.lower())]},
+                callb,
+            )
             return True
         return False
 
-    def cron_get(self,action, callb=None):
+    def cron_get(self, action, callb=None):
 
         """Cancel a timed action
 
@@ -893,14 +1004,17 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if self.properties["power"] == "on" and "cron_get" in self.support:
-            self.send_msg({ "method": "cron_get", "params": [["off","on"].index(action.lower())] },callb)
+            self.send_msg(
+                {"method": "cron_get", "params": [["off", "on"].index(action.lower())]},
+                callb,
+            )
             return True
         return False
 
-    #TODO implement these
-    #def set_adjust 2 string(action) string(prop)
+    # TODO implement these
+    # def set_adjust 2 string(action) string(prop)
 
-    def set_music (self,action, delay=5.0, callb=None):
+    def set_music(self, action, delay=5.0, callb=None):
 
         """Start music mode.
 
@@ -918,23 +1032,45 @@ class XiaomiBulb(object):
         """
         if "set_music" in self.support:
 
-            if action.lower() =="start" and not self.musicm:
+            if action.lower() == "start" and not self.musicm:
                 while True:
                     try:
                         myport = randint(9000, 24376)
                         sock = socket.socket()
-                        sock.bind((self.my_ip_addr,myport)) #Make sure the port is free
+                        sock.bind(
+                            (self.my_ip_addr, myport)
+                        )  # Make sure the port is free
                         break
                     except:
                         pass
                 self.musicm = aio.Future()
-                #print("Start Future {}".format(self.musicm))
-                coro=self.loop.create_server(partial(XiaomiMusicConnect,self,self.musicm,delay), sock=sock)
+                # print("Start Future {}".format(self.musicm))
+                coro = self.loop.create_server(
+                    partial(XiaomiMusicConnect, self, self.musicm, delay), sock=sock
+                )
                 xx = aio.ensure_future(coro)
-                #self.loop.call_soon(self.set_music,"start",self.my_ip_addr,myport)
-                self.loop.call_soon(self.send_msg_noqueue,{ "method": "set_music", "params": [["stop","start"].index(action.lower()),self.my_ip_addr,myport] },callb)
+                # self.loop.call_soon(self.set_music,"start",self.my_ip_addr,myport)
+                self.loop.call_soon(
+                    self.send_msg_noqueue,
+                    {
+                        "method": "set_music",
+                        "params": [
+                            ["stop", "start"].index(action.lower()),
+                            self.my_ip_addr,
+                            myport,
+                        ],
+                    },
+                    callb,
+                )
             elif action.lower() == "stop" and self.musicm:
-                self.loop.call_soon(self.send_msg_noqueue,{ "method": "set_music", "params": [["stop","start"].index(action.lower())] },callb)
+                self.loop.call_soon(
+                    self.send_msg_noqueue,
+                    {
+                        "method": "set_music",
+                        "params": [["stop", "start"].index(action.lower())],
+                    },
+                    callb,
+                )
                 self.music_mode_off()
             else:
                 return False
@@ -953,10 +1089,9 @@ class XiaomiBulb(object):
             :rtype: None
         """
         if "set" in self.support:
-            self.send_msg({ "method": "set_name", "params": [name] },callb)
+            self.send_msg({"method": "set_name", "params": [name]}, callb)
             return True
         return False
-
 
     #
     # Management Methods
@@ -966,17 +1101,17 @@ class XiaomiBulb(object):
         return False
         """
         self.transports.append(conn)
-        #print("Registering connection {} for {}".format(conn,self.bulb_id))
+        # print("Registering connection {} for {}".format(conn,self.bulb_id))
         if not self.registered:
-            self.my_ip_addr = conn.transport.get_extra_info('sockname')[0]
+            self.my_ip_addr = conn.transport.get_extra_info("sockname")[0]
             self.registered = True
             if self.parent:
                 self.parent.register(self)
 
-    def unregister(self,conn):
+    def unregister(self, conn):
         """Proxy method to unregister the device with the parent.
         """
-        #print("Unregistering connection {} for {}".format(conn,self.bulb_id))
+        # print("Unregistering connection {} for {}".format(conn,self.bulb_id))
         for x in range(len(self.transports)):
             if self.transports[x].id == conn.id:
                 try:
@@ -984,10 +1119,10 @@ class XiaomiBulb(object):
                 except:
                     pass
 
-                del(self.transports[x])
+                del self.transports[x]
                 break
 
-        if len(self.transports)==0 and self.registered:
+        if len(self.transports) == 0 and self.registered:
             self.registered = False
             if self.parent:
                 self.parent.unregister(self)
@@ -998,7 +1133,7 @@ class XiaomiBulb(object):
         for x in self.tranports:
             x.close()
 
-    def set_connections(self,nb):
+    def set_connections(self, nb):
         """Function to set the number of connection to open to a single bulb.
 
         By default, Xiaomi limits to 1 command per second per channel. You can
@@ -1011,7 +1146,7 @@ class XiaomiBulb(object):
         """
         self.tnb = nb
 
-    def set_queue_limit(self,length,policy="drop"):
+    def set_queue_limit(self, length, policy="drop"):
         """Set the queue size limit and the policy, what to do when the size limit is reached
 
             :param length: The maximum length of the message sending queue. 0 means no limit
@@ -1024,13 +1159,13 @@ class XiaomiBulb(object):
         """
         self.queue_limit = length
         if policy != "adapt" or "set_music" in self.support:
-            #Silently ignoring unsupported policy
+            # Silently ignoring unsupported policy
             self.queue_policy = policy
 
     def music_mode_off(self):
         if self.musicm:
-            #self.musicm is set to XiaomiMusicConnect in try_sending. So if we stop without sending, we need to check.
-            if isinstance(self.musicm,aio.Future):
+            # self.musicm is set to XiaomiMusicConnect in try_sending. So if we stop without sending, we need to check.
+            if isinstance(self.musicm, aio.Future):
                 if not self.musicm.cancel():
                     try:
                         self.musicm.result().close()
@@ -1040,61 +1175,61 @@ class XiaomiBulb(object):
                 self.musicm.close()
             self.musicm = False
 
-    #A couple of proxies
+    # A couple of proxies
     @property
     def power(self):
         if "power" in self.properties:
-            return  self.properties["power"]
+            return self.properties["power"]
         else:
             return "off"
 
     @property
     def colour(self):
-        result = {"hue":0, "saturation": 0, "brightness":0}
+        result = {"hue": 0, "saturation": 0, "brightness": 0}
         if "sat" in self.properties:
-            result['saturation']=self.properties["sat"]
+            result["saturation"] = self.properties["sat"]
         if "hue" in self.properties:
-            result['hue']=self.properties["hue"]
+            result["hue"] = self.properties["hue"]
         if "bright" in self.properties:
-            result['brightness']=self.properties["bright"]
+            result["brightness"] = self.properties["bright"]
 
         return result
 
     @property
     def rgb(self):
-        result = {"red":0, "green": 0, "blue":0}
+        result = {"red": 0, "green": 0, "blue": 0}
         if "rgb" in self.properties:
-            val=int(self.properties["rgb"])
-            for col in ["blue","green","red"]:
-                result[col] = val%256
-                val=int((val-result[col])/256)
+            val = int(self.properties["rgb"])
+            for col in ["blue", "green", "red"]:
+                result[col] = val % 256
+                val = int((val - result[col]) / 256)
 
-            return  result
+            return result
         else:
             return result
 
     @property
     def brightness(self):
         if "bright" in self.properties:
-            return  int(self.properties["bright"])
+            return int(self.properties["bright"])
         else:
             return 0
 
     @property
     def white(self):
-        result = {"brightness":0, "temperature": 0}
+        result = {"brightness": 0, "temperature": 0}
         if "ct" in self.properties:
-            result['temperature']=self.properties["ct"]
+            result["temperature"] = self.properties["ct"]
         if "bright" in self.properties:
-            result['brightness']=self.properties["bright"]
+            result["brightness"] = self.properties["bright"]
 
         return result
 
     @property
     def current_colour(self):
-        if self.properties['color_mode'] == Mode.RGB.value:
+        if self.properties["color_mode"] == Mode.RGB.value:
             return self.rgb
-        elif self.properties['color_mode'] == Mode.HSV.value:
+        elif self.properties["color_mode"] == Mode.HSV.value:
             return self.colour
         else:
             return self.white
@@ -1102,13 +1237,13 @@ class XiaomiBulb(object):
     @property
     def name(self):
         if "name" in self.properties:
-            return  self.properties["name"]
+            return self.properties["name"]
         else:
             return None
 
     @property
     def bulb_id(self):
         if "id" in self.properties:
-            return  self.properties["id"]
+            return self.properties["id"]
         else:
             return None

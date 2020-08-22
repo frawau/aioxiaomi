@@ -2,6 +2,13 @@
 
 aioxiaomi is a Python 3/asyncio library to control Xiaomi Yeelight LED lightbulbs over your LAN.
 
+[![PyPI version fury.io](https://badge.fury.io/py/aioxiaomi.svg)](https://pypi.pyt
+                                                                   hon.org/pypi/aioiotprov)
+[![MIT license](https://img.shields.io/badge/License-MIT-blue.svg)](https://lbesson
+                                                                    .mit-licen)
+[![GITHUB-BADGE](https://github.com/frawau/aioiotprov/workflows/black/badge.svg)](h
+                                                                                  ttps://github.com/psf/black)
+
 # Installation
 
 We are on PyPi so

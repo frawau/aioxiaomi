@@ -10,49 +10,56 @@ UPNP_PORT = 1982
 UPNP_ADDR = "239.255.255.250"
 _DISCOVERYTIMEOUT = 360
 
+
 class UPnPLoopbackException(Exception):
     """
     Using loopback interface as callback IP.
     """
 
+
 class XiaomiUPnP(aio.Protocol):
     """Class used to monitor UPnP messages from Yeelight bulbs.
     """
-    def __init__(self, loop,addr,handler,future):
+
+    def __init__(self, loop, addr, handler, future):
         super().__init__()
         self.loop = loop
         self.transport = None
-        self.addr=addr
+        self.addr = addr
         self.handler = handler
         self.task = None
         self.clients = {}
-        self.broadcast_cnt=0
-        self.future=future
+        self.broadcast_cnt = 0
+        self.future = future
         self.discovery_timeout = _DISCOVERYTIMEOUT
 
     def connection_made(self, transport):
         self.transport = transport
         self.future.set_result(self)
-        sock = self.transport.get_extra_info('socket')
-        sock.settimeout(3)
+        sock = self.transport.get_extra_info("socket")
+        # sock.settimeout(3)
         addrinfo = socket.getaddrinfo(self.addr, None)[0]
-        ttl = pack('@i', 1)
+        ttl = pack("@i", 1)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
 
     def broadcast_once(self):
         """Send the discovery mesage broadcast_once
         """
-        request = '\r\n'.join(("M-SEARCH * HTTP/1.1",
-                               "HOST:{}:{}",
-                               "ST:wifi_bulb",
-                               "MX:2",
-                               'MAN:"ssdp:discover"',
-                               "", "")).format(self.addr,UPNP_PORT)
-        self.transport.sendto(request.encode(), (self.addr,UPNP_PORT))
-
+        request = "\r\n".join(
+            (
+                "M-SEARCH * HTTP/1.1",
+                "HOST:{}:{}",
+                "ST:wifi_bulb",
+                "MX:2",
+                'MAN:"ssdp:discover"',
+                "",
+                "",
+            )
+        ).format(self.addr, UPNP_PORT)
+        self.transport.sendto(request.encode(), (self.addr, UPNP_PORT))
 
     def datagram_received(self, data, addr):
-        #print("Received datagram: {}".format(data))
+        # print("Received datagram: {}".format(data))
         headers = {}
         for line in data.decode("ascii").split("\r\n"):
             try:
@@ -62,23 +69,22 @@ class XiaomiUPnP(aio.Protocol):
                 pass
 
         if self.handler:
-            self.handler(addr,headers)
-
+            self.handler(addr, headers)
 
     def error_received(self, name):
         pass
-        #print('Error received:', exc)
+        # print('Error received:', exc)
 
     def connection_lost(self, udn):
         udn = udn.split(":")[1]
         del self.clients[udn]
         pass
 
-    def broadcast(self,seconds,timeout=_DISCOVERYTIMEOUT):
+    def broadcast(self, seconds, timeout=_DISCOVERYTIMEOUT):
         self.discovery_timeout = timeout
-        self.task= aio.get_event_loop().create_task(self._do_broadcast(seconds))
+        self.task = aio.get_event_loop().create_task(self._do_broadcast(seconds))
 
-    async def _do_broadcast(self,seconds):
+    async def _do_broadcast(self, seconds):
         count = seconds
         while True:
             if count == 0:
@@ -101,19 +107,19 @@ def start_xiaomi_discovery(handler):
     loop = aio.get_event_loop()
     future = aio.Future()
     connect = loop.create_datagram_endpoint(
-        lambda: XiaomiUPnP(loop,UPNP_ADDR,handler,future),
-        sock=sock
+        lambda: XiaomiUPnP(loop, UPNP_ADDR, handler, future), sock=sock
     )
-    x=aio.ensure_future(connect)
+    x = aio.ensure_future(connect)
     return future
+
 
 def test():
     logging.basicConfig(level=logging.DEBUG)
     broadcaster = {}
+
     def handler(sender, args):
         print("I GOT ONE")
         print(sender[0], args)
-
 
     loop = aio.get_event_loop()
     connect = start_xiaomi_discovery(handler)
